@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "paths": {
+      "@domain/*": ["./src/domain/*"],
+      "@surface/*": ["./src/surface/*"],
+      "@policy/*": ["./src/policy/*"],
+      "@artifact/*": ["./src/artifact/*"],
+      "@evidence/*": ["./src/evidence/*"],
+      "@agent/*": ["./src/agent/*"]
+    }
+  },
+  "include": ["src/**/*", "apps/**/*", "tests/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
