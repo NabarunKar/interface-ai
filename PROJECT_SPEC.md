@@ -1,7 +1,7 @@
 # PROJECT_SPEC.md — Computer-Use Automation System
 
 > **Source of truth** for all coding agents working on this project.
-> Updated: Phase 0.5 (foundation hardening).
+> Updated: Phase 1A (real browser surface).
 
 ---
 
@@ -132,6 +132,14 @@ interface Surface {
 
 …without changing the artifact schema, replay engine, or agent logic.
 
+### BrowserSurface implementation
+
+`BrowserSurface` (`src/surface/browser-surface.ts`) is the concrete Playwright-backed web adapter. It owns the Chromium browser/context/page lifecycle internally and exposes only the technology-neutral `Surface` contract. Playwright types do not appear in the domain layer or surface interface.
+
+`BrowserSurface.create({ headless })` launches Chromium, creates an isolated browser context, creates a page, and defaults to headless mode for automated tests. `close()` cleans up the page, context, and browser.
+
+`BrowserSurface` implements physical browser operations only. It does not know whether an action is authorized and does not call `PolicyEngine.evaluate()`. Authorization remains the responsibility of `PolicyEnforcedSurface`.
+
 **Locator strategies** support robust element targeting:
 
 | Strategy | Use Case |
@@ -144,6 +152,27 @@ interface Surface {
 | `coordinates` | Absolute screen coordinates (last resort; only for desktop/screenshot-based) |
 
 Locators support fallback chains: a primary strategy with ordered fallbacks. Attribute locators must keep the attribute name separate from the expected value; encoding both into one string is invalid.
+
+Browser locator resolution is centralized in `BrowserSurface`:
+- `role` uses Playwright role lookup. The supported compact representation is the role name alone, or `role[name='Accessible Name']`.
+- `label` uses label-based lookup and works for the Bank Ops Member ID field.
+- `text` prioritizes interactive role-based button/link matches, then falls back to visible text matching.
+- `attribute` uses the explicit `attributeName` + `value` schema.
+- `css` uses Playwright CSS locators.
+- `coordinates` uses mouse coordinates and is treated as a last resort.
+
+Fallbacks are tried in order only when a locator is unavailable/unresolvable. Browser errors include the attempted operation and locator details.
+
+### Observation normalization
+
+`observe()` converts the current browser page into the technology-neutral `Observation` shape:
+- current URL
+- page title
+- visible body text, truncated to a bounded size
+- a bounded list of visible/interactable page elements with text and selected attributes (`id`, `name`, `class`, `type`, `href`, `aria-label`, `role`, `placeholder`)
+- timestamp
+
+It intentionally does not dump the full DOM or produce an LLM-specific observation format.
 
 ---
 

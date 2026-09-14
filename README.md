@@ -31,6 +31,7 @@ See [PROJECT_SPEC.md](./PROJECT_SPEC.md) for the full architectural specificatio
 
 ```bash
 npm install
+npx playwright install chromium
 ```
 
 ## Running the Target Application
@@ -59,6 +60,29 @@ This runs all tests via Vitest, covering:
 - Domain schema validation (Zod)
 - Policy engine allow/deny decisions
 - Evidence logger functionality
+- BrowserSurface integration against the local Bank Operations Console via Playwright/Chromium
+
+Run only the browser surface integration tests:
+
+```bash
+npm test -- tests/browser-surface.test.ts
+```
+
+## BrowserSurface Headed Smoke Test
+
+Start the Bank Operations Console in one terminal:
+
+```bash
+npm run bank-ops
+```
+
+Then launch a headed BrowserSurface smoke test in another terminal:
+
+```bash
+npm run browser-surface:smoke -- http://localhost:3100
+```
+
+This opens Chromium through the `Surface` abstraction and prints the normalized observation. It does not run an LLM agent or replay executor.
 
 ## Project Structure
 
@@ -92,13 +116,16 @@ This runs all tests via Vitest, covering:
 └── README.md
 ```
 
-## What's Implemented (Phase 0)
+## What's Implemented
 
 - ✅ Documented architecture and technology choices
 - ✅ Local banking back-office target application
 - ✅ Surface abstraction interface (technology-neutral)
+- ✅ Playwright-backed BrowserSurface for real Chromium browser interaction
 - ✅ Domain types with Zod validation (goals, actions, observations, artifacts, outcomes, evidence)
 - ✅ Policy engine with domain/action/route allowlisting
+- ✅ Policy-enforced surface wrapper and approval model
+- ✅ Deterministic interpolation helpers and artifact validation
 - ✅ Evidence event model
 - ✅ Test suite
 
@@ -107,7 +134,6 @@ This runs all tests via Vitest, covering:
 - ❌ LLM discovery agent loop
 - ❌ Artifact recording pipeline
 - ❌ Deterministic replay executor
-- ❌ Playwright browser integration
 - ❌ Human operator console / handoff
 - ❌ PII redaction
 - ❌ File-based evidence logging
