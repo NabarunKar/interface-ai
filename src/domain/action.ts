@@ -9,7 +9,7 @@ export const LocatorStrategySchema = z.enum([
   'role',       // ARIA role + accessible name
   'label',      // form label association
   'text',       // visible text content
-  'attribute',  // arbitrary HTML attribute
+  'attribute',  // arbitrary HTML attribute (requires attributeName)
   'css',        // CSS selector
   'coordinates', // absolute screen coordinates (last resort)
 ]);
@@ -17,24 +17,42 @@ export const LocatorStrategySchema = z.enum([
 export type LocatorStrategy = z.infer<typeof LocatorStrategySchema>;
 
 /**
+ * A fallback locator entry.
+ * Same validation rules as the primary locator.
+ */
+const FallbackLocatorSchema = z.object({
+  strategy: LocatorStrategySchema,
+  value: z.string(),
+  /** Required when strategy is 'attribute'. The HTML attribute name to match. */
+  attributeName: z.string().optional(),
+}).refine(
+  (data) => data.strategy !== 'attribute' || (typeof data.attributeName === 'string' && data.attributeName.length > 0),
+  { message: 'attributeName is required when strategy is "attribute"', path: ['attributeName'] }
+);
+
+/**
  * A target element locator. Supports multiple strategies
  * for robustness — primary is preferred, fallbacks are tried in order.
+ *
+ * When strategy is 'attribute', the locator explicitly represents
+ * both the attribute name (attributeName) and the expected attribute
+ * value (value). This avoids ambiguous encoding conventions.
  */
 export const TargetLocatorSchema = z.object({
   /** Primary locator strategy */
   strategy: LocatorStrategySchema,
-  /** The value for the primary strategy (e.g., CSS selector string, role name, etc.) */
+  /** The value for the primary strategy (e.g., CSS selector string, role name, attribute value, etc.) */
   value: z.string(),
   /** Human-readable description of what this element is */
   description: z.string().optional(),
+  /** Required when strategy is 'attribute'. The HTML attribute name to match. */
+  attributeName: z.string().optional(),
   /** Optional fallback locators tried in order if primary fails */
-  fallbacks: z.array(
-    z.object({
-      strategy: LocatorStrategySchema,
-      value: z.string(),
-    })
-  ).optional(),
-});
+  fallbacks: z.array(FallbackLocatorSchema).optional(),
+}).refine(
+  (data) => data.strategy !== 'attribute' || (typeof data.attributeName === 'string' && data.attributeName.length > 0),
+  { message: 'attributeName is required when strategy is "attribute"', path: ['attributeName'] }
+);
 
 export type TargetLocator = z.infer<typeof TargetLocatorSchema>;
 

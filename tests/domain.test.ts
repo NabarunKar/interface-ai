@@ -9,6 +9,7 @@ import {
   PolicyConfigSchema,
   PolicyResultSchema,
   TargetLocatorSchema,
+  ApprovalRecordSchema,
 } from '../src/domain/index.js';
 
 describe('Domain Schemas', () => {
@@ -32,6 +33,34 @@ describe('Domain Schemas', () => {
         ],
       });
       expect(result.success).toBe(true);
+    });
+
+    it('should accept an attribute locator with separate name and value', () => {
+      const result = TargetLocatorSchema.safeParse({
+        strategy: 'attribute',
+        attributeName: 'data-member-id',
+        value: '10234',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject an attribute locator without attributeName', () => {
+      const result = TargetLocatorSchema.safeParse({
+        strategy: 'attribute',
+        value: '10234',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject an attribute fallback without attributeName', () => {
+      const result = TargetLocatorSchema.safeParse({
+        strategy: 'label',
+        value: 'Member ID',
+        fallbacks: [
+          { strategy: 'attribute', value: '10234' },
+        ],
+      });
+      expect(result.success).toBe(false);
     });
 
     it('should reject an invalid strategy', () => {
@@ -230,6 +259,16 @@ describe('Domain Schemas', () => {
         condition: 'page_contains_text' as const,
         expectedValue: 'ACCOUNTS',
       },
+      expectedBusinessOutcomes: [
+        {
+          code: 'MEMBER_NOT_FOUND',
+          checkpoint: {
+            description: 'Member not found message is displayed',
+            condition: 'page_contains_text' as const,
+            expectedValue: 'No member found',
+          },
+        },
+      ],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -260,6 +299,45 @@ describe('Domain Schemas', () => {
         id: 'cap-002',
       });
       expect(result.success).toBe(false);
+    });
+
+    it('should reject duplicate input parameter names', () => {
+      const result = CapabilityArtifactSchema.safeParse({
+        ...validArtifact,
+        inputs: [
+          { name: 'memberId', type: 'string' },
+          { name: 'memberId', type: 'string' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject duplicate step indices', () => {
+      const result = CapabilityArtifactSchema.safeParse({
+        ...validArtifact,
+        steps: [
+          { index: 0, action: { type: 'navigate', value: 'http://localhost:3100/' } },
+          { index: 0, action: { type: 'click', target: { strategy: 'text', value: 'SEARCH' } } },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept expected business outcomes with optional description', () => {
+      const result = CapabilityArtifactSchema.safeParse({
+        ...validArtifact,
+        expectedBusinessOutcomes: [
+          {
+            code: 'MEMBER_NOT_FOUND',
+            checkpoint: {
+              description: 'Member not found message is displayed',
+              condition: 'page_contains_text',
+              expectedValue: 'No member found',
+            },
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
     });
   });
 
@@ -301,6 +379,33 @@ describe('Domain Schemas', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should accept approval-related evidence events', () => {
+      const base = {
+        eventId: 10,
+        timestamp: new Date().toISOString(),
+        runId: 'run-001',
+        controlMode: 'paused' as const,
+        action: { type: 'type' as const, target: { strategy: 'label' as const, value: 'Member ID' }, value: '[REDACTED]' },
+        approvalScope: {
+          tenant: 'tenant-a',
+          targetApp: 'bank-ops',
+          capabilityId: 'lookup-member',
+          actionType: 'type' as const,
+          route: '/member',
+        },
+      };
+
+      for (const event of [
+        { ...base, type: 'approval_requested' as const },
+        { ...base, type: 'approval_denied' as const, approvalDecision: 'deny' as const },
+        { ...base, type: 'approval_granted' as const, approvalDecision: 'allow_once' as const },
+        { ...base, type: 'approval_granted' as const, approvalDecision: 'allow_and_remember' as const, approvalId: 'apr-001' },
+        { ...base, type: 'approval_remembered' as const, approvalDecision: 'allow_and_remember' as const, approvalId: 'apr-001' },
+      ]) {
+        expect(EvidenceEventSchema.safeParse(event).success).toBe(true);
+      }
+    });
+
     it('should reject an event with invalid type', () => {
       const result = EvidenceEventSchema.safeParse({
         eventId: 0,
@@ -328,6 +433,61 @@ describe('Domain Schemas', () => {
       const result = PolicyConfigSchema.safeParse({
         allowedDomains: [],
         allowedActions: ['click'],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject invalid allowed action strings', () => {
+      const result = PolicyConfigSchema.safeParse({
+        allowedDomains: ['localhost'],
+        allowedActions: ['navigate', 'clikc'],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject invalid risky action strings', () => {
+      const result = PolicyConfigSchema.safeParse({
+        allowedDomains: ['localhost'],
+        allowedActions: ['navigate', 'click'],
+        riskyActions: ['click', 'wire_transfer'],
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('ApprovalRecord', () => {
+    it('should accept a scoped durable remembered approval', () => {
+      const result = ApprovalRecordSchema.safeParse({
+        id: 'apr-001',
+        scope: {
+          tenant: 'tenant-a',
+          targetApp: 'bank-ops',
+          capabilityId: 'lookup-member',
+          actionType: 'click',
+          route: '/member',
+        },
+        decision: 'allow_and_remember',
+        createdAt: new Date().toISOString(),
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject non-remembered decisions in durable approval records', () => {
+      const result = ApprovalRecordSchema.safeParse({
+        id: 'apr-001',
+        scope: { targetApp: 'bank-ops', actionType: 'click' },
+        decision: 'allow_once',
+        createdAt: new Date().toISOString(),
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject actionType-only durable approval records', () => {
+      const result = ApprovalRecordSchema.safeParse({
+        id: 'apr-001',
+        scope: { actionType: 'click' },
+        decision: 'allow_and_remember',
+        createdAt: new Date().toISOString(),
       });
       expect(result.success).toBe(false);
     });

@@ -7,7 +7,7 @@ import { TargetLocatorSchema } from './action.js';
  */
 export const ArtifactInputSchema = z.object({
   /** Parameter name (used in step value interpolation) */
-  name: z.string().min(1),
+  name: z.string().min(1).regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
   /** Human-readable description */
   description: z.string().optional(),
   /** Expected type */
@@ -58,6 +58,27 @@ export const CheckpointSchema = z.object({
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
 
 /**
+ * A declared expected business outcome.
+ *
+ * Business outcomes are legitimate alternative results that the caller
+ * needs to know about — they are NOT failures. For example, "member not
+ * found" is a valid business answer, not a crash.
+ *
+ * Each outcome has a stable code, a human-readable description, and
+ * a checkpoint that describes how to detect the outcome on the surface.
+ */
+export const BusinessOutcomeSchema = z.object({
+  /** Stable code for this outcome (e.g., 'MEMBER_NOT_FOUND') */
+  code: z.string().min(1),
+  /** Human-readable description */
+  description: z.string().optional(),
+  /** How to detect this outcome on the surface */
+  checkpoint: CheckpointSchema,
+});
+
+export type BusinessOutcome = z.infer<typeof BusinessOutcomeSchema>;
+
+/**
  * A step in the capability artifact.
  * Extends Action with artifact-specific metadata.
  */
@@ -105,6 +126,8 @@ export const CapabilityArtifactSchema = z.object({
   outputs: z.array(ArtifactOutputSchema),
   /** Final success checkpoint */
   successCondition: CheckpointSchema,
+  /** Expected business outcomes — legitimate alternative results, not failures */
+  expectedBusinessOutcomes: z.array(BusinessOutcomeSchema).optional(),
   /** Policy metadata — which safety constraints apply */
   policyConstraints: z.object({
     /** Allowed domains/routes */
@@ -122,6 +145,30 @@ export const CapabilityArtifactSchema = z.object({
   sourceRunId: z.string().optional(),
   /** Tenant-specific overrides key (for multi-tenant reuse) */
   tenantOverrideKey: z.string().optional(),
+}).superRefine((artifact, ctx) => {
+  const inputNames = new Set<string>();
+  artifact.inputs.forEach((input, index) => {
+    if (inputNames.has(input.name)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['inputs', index, 'name'],
+        message: `Duplicate input parameter name '${input.name}'`,
+      });
+    }
+    inputNames.add(input.name);
+  });
+
+  const stepIndices = new Set<number>();
+  artifact.steps.forEach((step, index) => {
+    if (stepIndices.has(step.index)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['steps', index, 'index'],
+        message: `Duplicate step index ${step.index}`,
+      });
+    }
+    stepIndices.add(step.index);
+  });
 });
 
 export type CapabilityArtifact = z.infer<typeof CapabilityArtifactSchema>;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ActionSchema } from './action.js';
+import { ApprovalDecisionSchema, ApprovalScopeSchema } from './approval.js';
 
 /**
  * Who was in control when this event occurred.
@@ -15,6 +16,12 @@ export type ControlMode = z.infer<typeof ControlMode>;
 /**
  * A single event in the evidence log.
  * Designed to be serialized as JSON lines (JSONL).
+ *
+ * Approval-related events:
+ * - approval_requested: an action required human confirmation
+ * - approval_granted: a human approved the action
+ * - approval_denied: a human denied the action
+ * - approval_remembered: an existing remembered approval was applied
  */
 export const EvidenceEventSchema = z.object({
   /** Monotonically increasing event ID within a run */
@@ -37,6 +44,11 @@ export const EvidenceEventSchema = z.object({
     'human_takeover',
     'human_returned',
     'run_completed',
+    // Approval-related events
+    'approval_requested',
+    'approval_granted',
+    'approval_denied',
+    'approval_remembered',
   ]),
   /** Step index in the artifact (if applicable) */
   stepIndex: z.number().int().nonnegative().optional(),
@@ -50,6 +62,12 @@ export const EvidenceEventSchema = z.object({
   reasoning: z.string().optional(),
   /** Human-readable message */
   message: z.string().optional(),
+  /** ID of the approval record involved, if any */
+  approvalId: z.string().optional(),
+  /** The human's approval decision, if applicable */
+  approvalDecision: ApprovalDecisionSchema.optional(),
+  /** The scope of the approval, if applicable */
+  approvalScope: ApprovalScopeSchema.optional(),
 });
 
 export type EvidenceEvent = z.infer<typeof EvidenceEventSchema>;

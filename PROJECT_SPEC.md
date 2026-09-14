@@ -1,7 +1,7 @@
 # PROJECT_SPEC.md — Computer-Use Automation System
 
 > **Source of truth** for all coding agents working on this project.
-> Updated: Phase 0 (foundation).
+> Updated: Phase 0.5 (foundation hardening).
 
 ---
 
@@ -139,11 +139,11 @@ interface Surface {
 | `role` | ARIA role + accessible name (accessibility-tree-first) |
 | `label` | Form label association |
 | `text` | Visible text content |
-| `attribute` | Arbitrary HTML attribute |
+| `attribute` | Arbitrary HTML attribute, represented as `{ strategy: 'attribute', attributeName: '...', value: '...' }` |
 | `css` | CSS selector (most brittle, but sometimes necessary) |
 | `coordinates` | Absolute screen coordinates (last resort; only for desktop/screenshot-based) |
 
-Locators support fallback chains: a primary strategy with ordered fallbacks.
+Locators support fallback chains: a primary strategy with ordered fallbacks. Attribute locators must keep the attribute name separate from the expected value; encoding both into one string is invalid.
 
 ---
 
@@ -164,6 +164,7 @@ The `CapabilityArtifact` (`src/domain/artifact.ts`) is the central reusable unit
 | `steps` | Ordered actions with pre/post-condition checkpoints |
 | `outputs` | Declared outputs to extract (what the caller gets back) |
 | `successCondition` | Final checkpoint verifying the goal was met |
+| `expectedBusinessOutcomes` | Declarative expected non-success business outcomes, each with a stable code and detection checkpoint |
 | `policyConstraints` | Safety metadata (allowed domains, read-only flag, max duration) |
 | `createdAt` / `updatedAt` | Timestamps |
 | `sourceRunId` | Which discovery run produced this |
@@ -175,6 +176,45 @@ Each **step** contains:
 - `rationale` (why the agent chose this step during discovery)
 
 **Design intent**: The artifact is not a raw transcript. It is a reviewed, typed, versioned description that both a human reviewer and a calling AI agent can understand.
+
+### Parameter interpolation
+
+Artifacts may contain deterministic input placeholders using exactly this syntax:
+
+```text
+{{parameterName}}
+```
+
+Rules:
+- `parameterName` must be declared in `inputs` and must match the artifact input naming rules.
+- Missing required invocation parameters fail before any UI action executes.
+- Extra invocation parameters are rejected.
+- Undeclared or malformed placeholders are rejected.
+- There is no expression evaluation, template engine, or code execution.
+- Interpolation is string-based and deterministic.
+- Supported fields are action `value` fields, including navigation URLs, locator `value`, and checkpoint `expectedValue`.
+- `attributeName` is intentionally literal because attribute names describe page structure rather than per-invocation data.
+
+Future replay code must call the artifact-level interpolation validation helper before the first surface action.
+
+### Business outcomes
+
+Artifacts can declare expected business outcomes:
+
+```typescript
+expectedBusinessOutcomes: [
+  {
+    code: 'MEMBER_NOT_FOUND',
+    description: 'Member ID was valid but no record exists',
+    checkpoint: { condition: 'page_contains_text', expectedValue: 'No member found' }
+  }
+]
+```
+
+The intended replay contract is:
+- success condition matched → `success`
+- declared business outcome checkpoint matched → `business_outcome`
+- unhandled recoverable or technical issue → recovery path or `failure`
 
 ---
 
@@ -237,11 +277,16 @@ Action Proposal (from LLM or Replay)
    │         │──confirm→ Requires human confirmation
    └────┬────┘
         │ allow
-        ▼
-  Surface.execute(action)
+          ▼
+        PolicyEnforcedSurface
+          │
+          ▼
+        Underlying Surface adapter
 ```
 
-**Key design point**: The policy engine is *enforceable*, not *advisory*. The LLM cannot bypass it. Every action must pass through `PolicyEngine.evaluate()` before the surface adapter executes it.
+      **Key design point**: The policy engine is *enforceable*, not *advisory*. The normal execution path for future discovery and replay uses `PolicyEnforcedSurface`, a structural wrapper around the underlying `Surface`. UI-changing surface methods (`click`, `type`, `navigate`) must pass through `PolicyEngine.evaluate()` before execution. Passive operations (`observe`, `read`, `screenshot`, `currentUrl`, `isVisible`, `pageText`, `wait`, `close`) remain available without policy gating at this layer.
+
+      `PolicyEngine` is deterministic: it evaluates an action and supplied context against immutable policy configuration. It does not own mutable approval state.
 
 ### What the policy controls (Phase 0)
 
@@ -253,11 +298,47 @@ Action Proposal (from LLM or Replay)
 | Risky action types | Flagged actions require confirmation |
 | Action count limit | Maximum actions per run |
 
+`allowedActions` and `riskyActions` are validated with the canonical `ActionTypeSchema`; invalid action strings are rejected by schema validation.
+
+### Human approval and remembered authorization
+
+Policy decisions and human approval responses are separate concepts.
+
+Policy engine dispositions:
+- `allow`
+- `deny`
+- `require_confirmation`
+
+Human approval responses:
+- `deny` — do not execute the pending action; do not persist remembered authorization.
+- `allow_once` — execute the current pending action only; do not persist remembered authorization.
+- `allow_and_remember` — execute the current pending action and create durable remembered authorization.
+
+`ApprovalStore` represents durable remembered authorization state only. It is separate from `PolicyEngine`; the policy engine does not read or mutate it. For Phase 0.5, only an in-memory store exists for tests and future integration. Future human approval code is the authority that will write `allow_and_remember` records. The LLM must not be given a conceptual API to write approval state directly.
+
+Remembered approvals are explicitly scoped and optionally expirable. Scope supports:
+- `tenant`
+- `targetApp`
+- `capabilityId`
+- `actionType`
+- `route`
+
+A durable remembered approval must include `actionType` and at least one contextual boundary beyond action type. A scope containing only `actionType` is invalid because it would be a broad global approval. Matching is exact across supported scope fields, so an approval for one tenant/application/capability/action/route does not authorize another unless the stored scope explicitly matches that context. Expired approvals must not match.
+
 ### Future extensions
 - PII redaction in evidence/artifacts
 - Read-only vs. write distinction
 - Per-artifact policy constraints
 - Human confirmation for irreversible actions
+
+### Approval evidence
+
+Evidence events can represent approval-related concepts without requiring raw secrets:
+- confirmation requested
+- human denied
+- human allowed once
+- human allowed and remembered
+- remembered approval applied
 
 ---
 
