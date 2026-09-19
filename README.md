@@ -205,12 +205,18 @@ npm run browser-surface:smoke -- http://localhost:3100
 │   ├── evidence/               # Evidence/event logging
 │   │   ├── logger.ts               # In-memory evidence logger
 │   │   └── file-logger.ts          # JSONL file-based logger
+│   ├── replay/                 # Deterministic replay layer
+│   │   ├── types.ts                # ReplayOptions
+│   │   ├── checkpoint-evaluator.ts # Checkpoint condition evaluation on Surface
+│   │   ├── replay-engine.ts        # Deterministic step executor (no LLM)
+│   │   └── index.ts
 │   └── interpolation/          # Artifact parameter interpolation
 │       └── interpolate.ts
 ├── scripts/
 │   ├── browser-surface-smoke.ts    # Headed browser smoke test
 │   └── discover.ts                 # Live discovery agent CLI with fallback support
-├── tests/                      # Vitest test suites (163 tests)
+├── tests/                      # Vitest test suites (176 tests)
+│   └── fixtures/                   # Canonical capability artifact fixtures
 ├── evidence/                   # Discovery run evidence (gitignored)
 ├── PROJECT_SPEC.md             # Architectural specification
 └── README.md
@@ -237,12 +243,16 @@ npm run browser-surface:smoke -- http://localhost:3100
 - ✅ **Independent DONE verification** (model claims ≠ system success)
 - ✅ **Model trust boundary** (all model output validated via Zod before reaching surface)
 - ✅ **File-based evidence logging** (JSONL)
-- ✅ **Deterministic agent & fallback tests** (163 tests, zero live API calls in tests)
+- ✅ **Deterministic agent & fallback tests** (176 tests, zero live API calls in tests)
 - ✅ **CLI for live discovery** (`npm run agent:discover`) with provider fallback and override flags
+- ✅ **Deterministic replay engine** (`src/replay/`): executes capability artifacts step-by-step with **zero LLM in the loop**
+- ✅ **Runtime entry point flexibility**: replay against ephemeral test environments without mutating artifact provenance
+- ✅ **Checkpoint evaluation**: pre/postconditions, success conditions, and business outcomes (`MEMBER_NOT_FOUND`)
+- ✅ **Granular replay taxonomy**: `success`, `business_outcome`, `invalid_artifact`, `invalid_input`, `recoverable_failure`, `hard_failure`
+- ✅ **Live replay integration tests**: end-to-end replay verified against local Bank Operations Console in real Chromium
 
 ## What's NOT Implemented Yet
 
 - ❌ Artifact recording pipeline
-- ❌ Deterministic replay executor
 - ❌ Human operator console / handoff
 - ❌ PII redaction

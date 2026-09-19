@@ -99,7 +99,7 @@ A deliberately simple, legacy-looking internal banking application. It stands in
 | Evidence | `src/evidence/` | Structured event logging (in-memory + JSONL file) |
 | Agent | `src/agent/` | Discovery agent loop, model contracts, Gemini & TAMU adapters, fallback client, DONE verification |
 | Artifact | `src/artifact/` | *Future* — Artifact recording, storage, serialization |
-| Replay | `src/replay/` | *Future* — Deterministic replay executor |
+| Replay | `src/replay/` | Deterministic replay engine, checkpoint evaluator, outcome taxonomy |
 | Bank Ops | `apps/bank-ops/` | Target application (the thing being automated) |
 
 ### Agent contract (Phase 1B-1)
@@ -412,17 +412,36 @@ The intended replay contract is:
 
 ---
 
-## 6. Deterministic Replay Philosophy
+## 6. Deterministic Replay (Phase 1C)
 
-> **Not implemented in Phase 0.** This section describes the intended design.
+Replay is the production execution path. Given a saved `CapabilityArtifact` and invocation parameters:
 
-Replay is the production execution path. Given a saved artifact and input parameters:
+```text
+CapabilityArtifact + Parameters
+          ↓
+validateArtifactInterpolation()    <-- Fails fast before any UI interaction
+          ↓
+     ReplayEngine                  <-- Strictly ordered step execution, zero LLM
+          ↓
+PolicyEnforcedSurface              <-- Preserves all safety policies & approvals
+          ↓
+     BrowserSurface                <-- Reuses existing Playwright/Chromium driver
+          ↓
+Target Application (Bank Operations Console)
+```
 
-1. **No LLM in the loop.** Every decision was already made during discovery.
-2. **Stable targeting.** Locators use robust strategies (label, role, text) with fallbacks, not fragile coordinates or generated selectors.
-3. **Checkpoint verification.** Each step can have pre/post-condition checks. The replay engine verifies them rather than assuming actions succeeded.
-4. **Structured results.** Replay produces a `ReplayResult` with status (`success`, `business_outcome`, `failure`), extracted outputs, and enough detail to debug failures.
-5. **Evidence trail.** Every action and observation during replay is logged as structured evidence events.
+1. **No LLM in the loop.** Every decision was already made during discovery. The replay engine never imports, instantiates, or calls any `ModelClient` or LLM API.
+2. **Deterministic step order.** Actions are executed in strict `step.index` sequence without re-planning or inferring steps.
+3. **Runtime entry point flexibility.** While `artifact.entryPoint` is preserved for provenance, `ReplayOptions.entryPoint` allows replaying against ephemeral or staging environments.
+4. **Checkpoint verification.** Pre- and post-conditions, success conditions, and declared expected business outcomes are evaluated against the live `Surface` via `evaluateCheckpoint()`.
+5. **Structured outcome taxonomy.** Replay returns a `ReplayResult` distinguishing:
+   - `success`: Goal achieved and declared outputs extracted.
+   - `business_outcome`: Declared business checkpoint met (e.g. `MEMBER_NOT_FOUND`), not an error.
+   - `invalid_artifact`: Malformed artifact schema or template syntax.
+   - `invalid_input`: Missing, extra, or mistyped invocation parameters.
+   - `recoverable_failure`: Transient condition (e.g., timeout or confirmation required).
+   - `hard_failure`: Unrecoverable error (e.g., policy denial, element not found, failed checkpoint).
+6. **Evidence trail.** Every action, observation, checkpoint result, and failure during replay is recorded using `EvidenceLogger`.
 
 ---
 
@@ -593,7 +612,7 @@ Hundreds of tenants (financial institutions) each run ~20 applications. Many ten
 | BrowserSurface Playwright integration | ✅ **Implemented** (Phase 1A) |
 | File-based evidence logging (JSONL) | ✅ **Implemented** (Phase 1B-2) |
 | Artifact recording pipeline | **Not implemented** — schema defined, recorder not built |
-| Deterministic replay executor | **Not implemented** — result types defined, executor not built |
+| Deterministic replay executor | ✅ **Implemented** (Phase 1C) |
 | Human operator console | **Not implemented** — state machine described, no UI |
 | Human handoff mechanism | **Not implemented** — control mode types defined |
 | PII redaction | **Not implemented** — design note only |

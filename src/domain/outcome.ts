@@ -16,6 +16,8 @@ export const OutcomeCategory = z.enum([
   'BUSINESS_OUTCOME',
   'RECOVERABLE',
   'HARD_FAILURE',
+  'INVALID_ARTIFACT',
+  'INVALID_INPUT',
 ]);
 
 export type OutcomeCategory = z.infer<typeof OutcomeCategory>;
@@ -26,7 +28,11 @@ export type OutcomeCategory = z.infer<typeof OutcomeCategory>;
 export const ReplayStatus = z.enum([
   'success',
   'business_outcome',
-  'failure',
+  'invalid_artifact',
+  'invalid_input',
+  'recoverable_failure',
+  'hard_failure',
+  'failure', // retained for generic/backwards compatibility
 ]);
 
 export type ReplayStatus = z.infer<typeof ReplayStatus>;
