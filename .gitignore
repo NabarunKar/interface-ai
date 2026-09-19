@@ -1,6 +1,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
-.env
 .env.local
 evidence/runs/
+evidence/discovery/
+evidence/*.png
+.env
+.env.*
+!.env.example

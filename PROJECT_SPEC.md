@@ -1,7 +1,7 @@
 # PROJECT_SPEC.md — Computer-Use Automation System
 
 > **Source of truth** for all coding agents working on this project.
-> Updated: Phase 1A (real browser surface).
+> Updated: Phase 1B-2 (real LLM discovery agent).
 
 ---
 
@@ -59,8 +59,8 @@ A deliberately simple, legacy-looking internal banking application. It stands in
 ```
 ┌─────────────────────────────────────────────────┐
 │                   Agent Layer                    │
-│         (Goal → Observe → Decide → Act)         │
-│              [Phase 1 — stubbed]                 │
+│    Goal + Observation → ModelDecision contract   │
+│          [Phase 1B-1 — contract only]            │
 └────────────────────┬────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────┐
@@ -96,11 +96,176 @@ A deliberately simple, legacy-looking internal banking application. It stands in
 | Domain | `src/domain/` | Core types and Zod schemas: actions, goals, observations, artifacts, outcomes, evidence, policy |
 | Surface | `src/surface/` | Technology-neutral `Surface` interface + `BrowserSurface` adapter |
 | Policy | `src/policy/` | Configurable action allowlist and risk classification |
-| Evidence | `src/evidence/` | Structured event logging (JSONL-friendly) |
-| Agent | `src/agent/` | *Phase 1* — LLM-driven discovery loop |
-| Artifact | `src/artifact/` | *Phase 1* — Artifact recording, storage, serialization |
-| Replay | `src/replay/` | *Phase 1* — Deterministic replay executor |
+| Evidence | `src/evidence/` | Structured event logging (in-memory + JSONL file) |
+| Agent | `src/agent/` | Discovery agent loop, model contracts, Gemini & TAMU adapters, fallback client, DONE verification |
+| Artifact | `src/artifact/` | *Future* — Artifact recording, storage, serialization |
+| Replay | `src/replay/` | *Future* — Deterministic replay executor |
 | Bank Ops | `apps/bank-ops/` | Target application (the thing being automated) |
+
+### Agent contract (Phase 1B-1)
+
+The provider-neutral contract defines:
+
+```typescript
+interface ModelClient {
+  decide(input: ModelInput): Promise<unknown>;
+}
+```
+
+The return type is `unknown` because model output is untrusted until parsed and validated. The validation boundary is:
+
+```text
+raw model output
+  → ModelDecisionSchema.parse(...)
+  → validated ModelDecision
+  → validated domain Action, if type === ACTION
+  → PolicyEnforcedSurface
+```
+
+The core agent contracts import no OpenAI, Anthropic, Gemini, Playwright, or browser-specific types.
+
+`ModelInput` is built from technology-neutral data:
+- `Goal`
+- current `Observation`
+- current step index
+- remaining step budget
+- optional previous structured decisions
+
+`ModelDecision` is structured data only:
+- `ACTION` — contains an existing domain `Action`
+- `DONE` — terminal success, with optional reason and outputs
+- `STUCK` — terminal stuck/needs-human condition, with reason
+- `ABORT` — terminal abort/failure condition, with reason
+
+Invalid actions, invalid locators, unknown decision types, missing required fields, and extra fields are rejected before any surface method is called.
+
+### Discovery agent (Phase 1B-2)
+
+The `DiscoveryAgent` (`src/agent/discovery-agent.ts`) implements the real observe → decide → validate → policy → execute loop.
+
+#### Provider architecture
+
+The core agent depends only on the provider-neutral `ModelClient` interface. Provider adapters and fallback logic sit entirely outside the agent loop:
+
+```text
+DiscoveryAgent
+    ↓
+ModelClient (interface: decide(input) => Promise<unknown>)
+    ↓
+FallbackModelClient (transient failure orchestration)
+    ├── GeminiModelClient (primary: @google/genai, gemini-3.8-flash)
+    └── TamuModelClient (fallback: OpenAI-compatible chat completions)
+```
+
+1. **Gemini (`GeminiModelClient`)**:
+   - Primary provider using `@google/genai`.
+   - Default model: `gemini-3.8-flash` (configurable via `GEMINI_MODEL`).
+   - Credential: `GEMINI_API_KEY`.
+   - Structured JSON output constrained to `ModelDecision` schema.
+
+2. **TAMU AI Chat (`TamuModelClient`)**:
+   - Secondary / fallback provider using standard OpenAI-compatible `/chat/completions` API shape.
+   - Endpoint: `${TAMU_BASE_URL}/chat/completions` (strictly configurable via `TAMU_BASE_URL`, never guessed or hardcoded).
+   - Model: strictly configurable via `TAMU_MODEL` (never assumed or invented).
+   - Credential: `TAMU_API_KEY` passed via `Authorization: Bearer <key>`.
+   - Structured JSON response mode: `response_format: { type: "json_object" }`.
+   - Independent validation: Does NOT duplicate Zod validation inside the client; returns `unknown` JSON for parsing by `parseModelDecision()`.
+   - Does NOT import Gemini, Playwright, or surface types.
+
+3. **Fallback Wrapper (`FallbackModelClient`)**:
+   - Orchestrates primary and secondary `ModelClient` instances.
+   - Preserves `ModelClient` interface neutrality (`DiscoveryAgent` cannot tell whether fallback occurred or which provider answered).
+
+#### Fallback semantics & transient error taxonomy
+
+Fallback is strictly limited to **transient infrastructure and provider availability problems**:
+
+| Failure Class | Status / Error Code | Action | Rationale |
+|---|---|---|---|
+| **Rate Limiting** | HTTP 429 | **Fallback** | Primary quota/rate limit exhausted; fallback may have capacity |
+| **Server Overload** | HTTP 503 | **Fallback** | Primary model high demand / temporarily unavailable |
+| **Internal Server Error** | HTTP 500 | **Fallback** | Primary provider transient backend defect |
+| **Bad Gateway / Gateway Timeout** | HTTP 502, 504 | **Fallback** | Upstream provider proxy/routing disruption |
+| **Network Timeout** | `TimeoutError`, `ETIMEDOUT`, `AbortError` | **Fallback** | Network connection or read timed out |
+| **Connection Errors** | `ECONNREFUSED`, `ECONNRESET`, `ENOTFOUND` | **Fallback** | Transient transport failure reaching primary |
+| **Client Request Error** | HTTP 400 | **Fail Immediately (No fallback)** | Malformed request or invalid payload; must not hide schema defect |
+| **Authentication Failure** | HTTP 401 | **Fail Immediately (No fallback)** | Invalid or expired API key; must fail fast |
+| **Forbidden / Permission** | HTTP 403 | **Fail Immediately (No fallback)** | Project or credential lacks permission; not transient |
+| **Not Found / Bad Path** | HTTP 404 | **Fail Immediately (No fallback)** | Incorrect endpoint or missing model ID |
+| **Unprocessable Entity** | HTTP 422 | **Fail Immediately (No fallback)** | Semantic payload error |
+| **Missing Configuration** | `Error` | **Fail Immediately (No fallback)** | Missing environment variable; fail clearly without searching external files |
+
+If both primary and fallback fail, `FallbackModelClient` raises a `CombinedProviderError` containing safe diagnostics without leaking credentials or raw request secrets.
+
+If TAMU is not configured in the environment, the factory returns `GeminiModelClient` alone so unconfigured fallback never impedes Gemini-only execution.
+
+#### Provider configuration
+
+All provider credentials and endpoints are read from process environment variables or repository `.env`:
+
+```bash
+# Gemini Provider (Primary)
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.8-flash
+
+# TAMU Provider (Fallback — supplied by developer)
+TAMU_API_KEY=
+TAMU_BASE_URL=
+TAMU_MODEL=
+
+# Provider Routing (optional)
+LLM_PRIMARY_PROVIDER=gemini    # gemini | tamu
+LLM_FALLBACK_PROVIDER=tamu     # tamu | gemini
+```
+
+**Model trust boundary**:
+```text
+Provider API response (unknown)
+  → JSON.parse
+  → parseModelDecision (Zod validation)
+  → validated ModelDecision
+  → if ACTION → PolicyEnforcedSurface
+  → BrowserSurface
+  → Playwright
+```
+
+The model never receives Playwright objects, Page objects, browser handles, filesystem access, or shell access. The model only proposes structured actions.
+
+**Independent DONE verification**:
+```text
+Model says DONE ≠ System assumes success
+```
+
+After the model returns DONE, the `GoalVerifier` independently checks actual surface state (URL, page content, extracted values) before the agent reports success. The `MemberBalanceVerifier` checks:
+1. URL contains `/accounts`
+2. Page text contains "Savings"
+3. A dollar amount is extractable near "Savings"
+
+**Discovery state machine**:
+
+```text
+IDLE → OBSERVING → DECIDING → POLICY_CHECKING → EXECUTING → VERIFYING → OBSERVING (loop)
+                  → SUCCESS (DONE verified)
+                  → STUCK
+                  → FAILED (DONE unverified, ABORT, errors)
+                  → TIMEOUT
+                  → MAX_STEPS
+```
+
+Terminal states: `SUCCESS`, `BUSINESS_OUTCOME`, `STUCK`, `FAILED`, `TIMEOUT`, `MAX_STEPS`.
+
+Policy denial and confirmation-required conditions are not ordinary browser failures. They produce distinguishable `AgentResult` statuses (`failed` with policy reason, `needs_human`).
+
+**Evidence**: Every step emits structured `EvidenceEvent` records. The `FileEvidenceLogger` writes JSONL to disk. Evidence includes: run_started, observations, action_proposed, action_executed, action_rejected, errors, and run_completed.
+
+**Configurable budgets**: `maxSteps` (default 15), `timeoutMs` (default 120s), `modelTimeoutMs` (default 30s).
+
+**Live demo**:
+```bash
+GEMINI_API_KEY=<key> npm run agent:discover -- --goal "Find member 10234 and return their current savings balance"
+```
+
+The CLI starts an ephemeral bank-ops server by default. Use `--url` for an existing instance.
 
 ---
 
@@ -313,9 +478,9 @@ Action Proposal (from LLM or Replay)
         Underlying Surface adapter
 ```
 
-      **Key design point**: The policy engine is *enforceable*, not *advisory*. The normal execution path for future discovery and replay uses `PolicyEnforcedSurface`, a structural wrapper around the underlying `Surface`. UI-changing surface methods (`click`, `type`, `navigate`) must pass through `PolicyEngine.evaluate()` before execution. Passive operations (`observe`, `read`, `screenshot`, `currentUrl`, `isVisible`, `pageText`, `wait`, `close`) remain available without policy gating at this layer.
+    **Key design point**: The policy engine is *enforceable*, not *advisory*. The normal execution path for future discovery and replay uses `PolicyEnforcedSurface`, a structural wrapper around the underlying `Surface`. UI-changing surface methods (`click`, `type`, `navigate`) must pass through `PolicyEngine.evaluate()` before execution. Passive operations (`observe`, `read`, `screenshot`, `currentUrl`, `isVisible`, `pageText`, `wait`, `close`) remain available without policy gating at this layer.
 
-      `PolicyEngine` is deterministic: it evaluates an action and supplied context against immutable policy configuration. It does not own mutable approval state.
+    `PolicyEngine` is deterministic: it evaluates an action and supplied context against immutable policy configuration. It does not own mutable approval state.
 
 ### What the policy controls (Phase 0)
 
@@ -420,19 +585,19 @@ Hundreds of tenants (financial institutions) each run ~20 applications. Many ten
 
 ---
 
-## 11. Explicit Cuts (What Phase 0 Does NOT Implement)
+## 11. Explicit Cuts (What Is NOT Yet Implemented)
 
 | Component | Status |
 |-----------|--------|
-| LLM discovery agent loop | **Not implemented** — agent module is empty |
+| LLM discovery agent loop | ✅ **Implemented** (Phase 1B-2) |
+| BrowserSurface Playwright integration | ✅ **Implemented** (Phase 1A) |
+| File-based evidence logging (JSONL) | ✅ **Implemented** (Phase 1B-2) |
 | Artifact recording pipeline | **Not implemented** — schema defined, recorder not built |
 | Deterministic replay executor | **Not implemented** — result types defined, executor not built |
-| BrowserSurface Playwright integration | **Stubbed** — interface defined, methods throw "not implemented" |
 | Human operator console | **Not implemented** — state machine described, no UI |
 | Human handoff mechanism | **Not implemented** — control mode types defined |
 | PII redaction | **Not implemented** — design note only |
 | Multi-tenant override resolution | **Not implemented** — field exists, no logic |
-| File-based evidence logging (JSONL) | **Not implemented** — in-memory logger only |
 | Fault injection in target app | **Not implemented** — architecture supports it |
 | Desktop surface adapter | **Not implemented** — interface supports it |
 

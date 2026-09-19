@@ -9,17 +9,19 @@
     "test:watch": "vitest",
     "bank-ops": "tsx apps/bank-ops/src/server.ts",
     "browser-surface:smoke": "tsx scripts/browser-surface-smoke.ts --headed",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "agent:discover": "tsx scripts/discover.ts"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
-    "vitest": "^2.0.0",
-    "tsx": "^4.16.0",
-    "@types/node": "^22.0.0",
     "@types/express": "^5.0.0",
-    "playwright": "^1.45.0"
+    "@types/node": "^22.0.0",
+    "playwright": "^1.45.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
   },
   "dependencies": {
+    "@google/genai": "^2.22.0",
     "express": "^5.0.0",
     "zod": "^3.23.0"
   }
