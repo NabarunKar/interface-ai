@@ -445,6 +445,29 @@ Target Application (Bank Operations Console)
 
 ---
 
+## 6.1 Artifact Recording & Persistence (Phase 1D)
+
+Artifact recording bridges the exploratory discovery loop to production deterministic replay:
+
+```text
+DiscoveryAgent (executed actions + observations + verified outputs)
+          ↓
+ArtifactRecorder (extracts inputs, parameterizes {{memberId}}, synthesizes checkpoints)
+          ↓
+Zod Schema Validation (CapabilityArtifactSchema) + Interpolation Validation
+          ↓
+Persistence (evidence/artifacts/<id>.json)
+          ↓
+ReplayEngine (loads persisted artifact, replays without LLM)
+```
+
+1. **Passive consumption**: Consumes executed actions from `DiscoveryAgent` rather than re-running or re-planning them.
+2. **Reusable parameterization**: Translates concrete values (e.g., `10234`) into `{{memberId}}` using the existing interpolation contract.
+3. **Pre-persistence validation**: Validates the synthesized artifact with `CapabilityArtifactSchema` and `validateArtifactInterpolation()` before writing to disk.
+4. **Clean persistence & provenance**: Persists structured JSON under `evidence/artifacts/`, preserving discovery `sourceRunId` without logging or persisting credentials.
+
+---
+
 ## 7. Error Taxonomy
 
 Errors and outcomes are classified into three categories:
@@ -611,7 +634,7 @@ Hundreds of tenants (financial institutions) each run ~20 applications. Many ten
 | LLM discovery agent loop | ✅ **Implemented** (Phase 1B-2) |
 | BrowserSurface Playwright integration | ✅ **Implemented** (Phase 1A) |
 | File-based evidence logging (JSONL) | ✅ **Implemented** (Phase 1B-2) |
-| Artifact recording pipeline | **Not implemented** — schema defined, recorder not built |
+| Artifact recording pipeline | ✅ **Implemented** (Phase 1D) |
 | Deterministic replay executor | ✅ **Implemented** (Phase 1C) |
 | Human operator console | **Not implemented** — state machine described, no UI |
 | Human handoff mechanism | **Not implemented** — control mode types defined |

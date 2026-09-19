@@ -3,6 +3,7 @@ import { ActionSchema } from '../domain/action.js';
 import { GoalSchema } from '../domain/goal.js';
 import { ObservationSchema } from '../domain/observation.js';
 import { OutcomeCategory } from '../domain/outcome.js';
+import { CapabilityArtifactSchema } from '../domain/artifact.js';
 
 /**
  * Model decisions are structured, provider-neutral, and untrusted until parsed.
@@ -76,6 +77,8 @@ export const AgentResultSchema = z.object({
   runId: z.string().optional(),
   evidenceRef: z.string().optional(),
   category: OutcomeCategory.optional(),
+  artifact: CapabilityArtifactSchema.optional(),
+  artifactPath: z.string().optional(),
 });
 
 export type AgentResult = z.infer<typeof AgentResultSchema>;

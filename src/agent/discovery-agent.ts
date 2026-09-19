@@ -8,6 +8,8 @@ import type { GoalVerifier } from './goal-verifier.js';
 import { canTransitionAgentState, isTerminalAgentState } from './types.js';
 import { buildModelInput, parseModelDecision, ModelDecisionValidationError } from './validation.js';
 import { PolicyDeniedError, ConfirmationRequiredError } from '../policy/enforced-surface.js';
+import type { CapabilityArtifact } from '../domain/artifact.js';
+import type { ArtifactRecorder, DiscoveredStepRecord } from '../artifact/index.js';
 
 /**
  * Configuration for the discovery agent loop.
@@ -19,9 +21,11 @@ export interface DiscoveryAgentConfig {
   timeoutMs?: number;
   /** Per-model-call timeout in ms. Default: 30_000 */
   modelTimeoutMs?: number;
+  /** Optional artifact recorder to capture and persist capability artifact on verified success */
+  recorder?: ArtifactRecorder;
 }
 
-const DEFAULT_CONFIG: Required<DiscoveryAgentConfig> = {
+const DEFAULT_CONFIG: Required<Omit<DiscoveryAgentConfig, 'recorder'>> = {
   maxSteps: 15,
   timeoutMs: 120_000,
   modelTimeoutMs: 30_000,
@@ -44,7 +48,8 @@ const DEFAULT_CONFIG: Required<DiscoveryAgentConfig> = {
  *   DECIDING → SUCCESS (DONE verified) | STUCK | FAILED (DONE unverified, ABORT, errors)
  */
 export class DiscoveryAgent {
-  private readonly config: Required<DiscoveryAgentConfig>;
+  private readonly config: Required<Omit<DiscoveryAgentConfig, 'recorder'>>;
+  private readonly recorder?: ArtifactRecorder;
 
   constructor(
     private readonly model: ModelClient,
@@ -52,8 +57,14 @@ export class DiscoveryAgent {
     private readonly evidence: EvidenceLogger,
     private readonly verifier: GoalVerifier,
     config?: DiscoveryAgentConfig,
+    recorder?: ArtifactRecorder,
   ) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = {
+      maxSteps: config?.maxSteps ?? DEFAULT_CONFIG.maxSteps,
+      timeoutMs: config?.timeoutMs ?? DEFAULT_CONFIG.timeoutMs,
+      modelTimeoutMs: config?.modelTimeoutMs ?? DEFAULT_CONFIG.modelTimeoutMs,
+    };
+    this.recorder = recorder ?? config?.recorder;
   }
 
   async run(goal: Goal): Promise<AgentResult> {
@@ -62,6 +73,7 @@ export class DiscoveryAgent {
     let state: AgentState = 'IDLE';
     let stepIndex = 0;
     const previousDecisions: ModelDecision[] = [];
+    const executedSteps: DiscoveredStepRecord[] = [];
 
     const transition = (to: AgentState): void => {
       if (!canTransitionAgentState(state, to)) {
@@ -175,11 +187,42 @@ export class DiscoveryAgent {
 
           if (verification.verified) {
             transition('SUCCESS');
+            let recordedArtifact: CapabilityArtifact | undefined;
+            let artifactPath: string | undefined;
+
+            if (this.recorder) {
+              try {
+                const recordResult = await this.recorder.record({
+                  goal,
+                  steps: executedSteps,
+                  outputs: verification.outputs,
+                  runId,
+                  entryPoint: goal.entryPoint,
+                });
+                recordedArtifact = recordResult.artifact;
+                artifactPath = recordResult.filePath;
+              } catch (err) {
+                transition('FAILED');
+                const reason = `Artifact recording failed: ${err instanceof Error ? err.message : String(err)}`;
+                this.emitEvidence(runId, stepIndex, 'error', { message: reason });
+                return this.buildResult('failed', goal, stepIndex, runId, reason);
+              }
+            }
+
             this.emitEvidence(runId, stepIndex, 'run_completed', {
               message: `Goal completed: ${verification.reason}`,
-              data: { outputs: verification.outputs },
+              data: { outputs: verification.outputs, artifactPath },
             });
-            return this.buildResult('success', goal, stepIndex, runId, verification.reason, verification.outputs);
+            return this.buildResult(
+              'success',
+              goal,
+              stepIndex,
+              runId,
+              verification.reason,
+              verification.outputs,
+              recordedArtifact,
+              artifactPath,
+            );
           } else {
             transition('FAILED');
             this.emitEvidence(runId, stepIndex, 'error', {
@@ -251,6 +294,15 @@ export class DiscoveryAgent {
 
         // Post-action: brief wait for page to settle
         await this.surface.wait({ durationMs: 300 });
+        const postUrl = await this.surface.currentUrl();
+
+        executedSteps.push({
+          index: stepIndex,
+          action,
+          preUrl: observation.url,
+          postUrl,
+          rationale: decision.reason,
+        });
 
         // Move to VERIFYING then back to OBSERVING for next iteration
         transition('VERIFYING');
@@ -311,6 +363,8 @@ export class DiscoveryAgent {
     runId: string,
     reason?: string,
     outputs?: Record<string, unknown>,
+    artifact?: CapabilityArtifact,
+    artifactPath?: string,
   ): AgentResult {
     return {
       status,
@@ -319,6 +373,8 @@ export class DiscoveryAgent {
       runId,
       reason,
       outputs,
+      artifact,
+      artifactPath,
     };
   }
 

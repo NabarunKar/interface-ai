@@ -24,6 +24,7 @@ import { DiscoveryAgent } from '../src/agent/discovery-agent.js';
 import { createConfiguredModelClient } from '../src/agent/index.js';
 import { MemberBalanceVerifier } from '../src/agent/goal-verifier.js';
 import { FileEvidenceLogger } from '../src/evidence/file-logger.js';
+import { ArtifactRecorder } from '../src/artifact/index.js';
 import type { Goal } from '../src/domain/goal.js';
 
 // ---------------------------------------------------------------------------
@@ -126,10 +127,18 @@ async function main() {
   // Verifier
   const verifier = new MemberBalanceVerifier();
 
+  // Artifact recorder
+  const artifactsDir = resolve(process.cwd(), 'evidence', 'artifacts');
+  const recorder = new ArtifactRecorder({
+    outputDir: artifactsDir,
+    canonicalEntryPoint: urlOverride ?? 'http://localhost:3100/',
+  });
+
   // Agent
   const agent = new DiscoveryAgent(model, enforcedSurface, evidence, verifier, {
     maxSteps,
     timeoutMs: 120_000,
+    recorder,
   });
 
   console.log(`[discover] Goal: ${goalText}`);
@@ -151,6 +160,9 @@ async function main() {
     writeFileSync(resultPath, JSON.stringify(result, null, 2));
     console.log(`[discover] Result saved to: ${resultPath}`);
     console.log(`[discover] Evidence saved to: ${evidencePath}`);
+    if (result.artifactPath) {
+      console.log(`[discover] Artifact saved to: ${result.artifactPath}`);
+    }
 
     process.exitCode = result.status === 'success' ? 0 : 1;
   } catch (error) {
