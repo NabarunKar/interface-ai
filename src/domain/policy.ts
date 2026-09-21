@@ -53,8 +53,36 @@ export const PolicyConfigSchema = z.object({
   allowedActions: z.array(ActionTypeSchema),
   /** Action types considered risky (require confirmation) — must be valid ActionType values */
   riskyActions: z.array(ActionTypeSchema).optional(),
+  /** URL route patterns (regex strings) considered risky (require confirmation) */
+  riskyRoutes: z.array(z.string()).optional(),
+  /** Target selectors or text patterns considered risky (require confirmation) */
+  riskyTargets: z.array(z.string()).optional(),
   /** Maximum actions per run */
   maxActionsPerRun: z.number().positive().int().optional(),
-});
+}).refine(
+  (data) => {
+    if (data.allowedRoutes) {
+      for (const pattern of data.allowedRoutes) {
+        try {
+          new RegExp(pattern);
+        } catch {
+          return false;
+        }
+      }
+    }
+    if (data.riskyRoutes) {
+      for (const pattern of data.riskyRoutes) {
+        try {
+          new RegExp(pattern);
+        } catch {
+          return false;
+        }
+      }
+    }
+    return true;
+  },
+  { message: 'Route patterns must be valid regular expressions' }
+);
 
 export type PolicyConfig = z.infer<typeof PolicyConfigSchema>;
+

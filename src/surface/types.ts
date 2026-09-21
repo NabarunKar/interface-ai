@@ -11,6 +11,9 @@ import type { Observation } from '../domain/observation.js';
  * Implementations handle the technology-specific details.
  */
 export interface Surface {
+  /** Stable, technology-neutral unique session identifier */
+  readonly sessionId: string;
+
   /** Get the current observation from the surface */
   observe(): Promise<Observation>;
 

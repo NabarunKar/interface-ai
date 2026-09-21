@@ -11,6 +11,9 @@ import { z } from 'zod';
  *
  * HARD_FAILURE: An unrecoverable error that should stop execution and
  *   surface a clear, debuggable error.
+ *
+ * HUMAN_DENIAL: An explicit human control decision to deny the proposed action
+ *   during handoff. Distinct from target application business outcomes.
  */
 export const OutcomeCategory = z.enum([
   'BUSINESS_OUTCOME',
@@ -18,6 +21,7 @@ export const OutcomeCategory = z.enum([
   'HARD_FAILURE',
   'INVALID_ARTIFACT',
   'INVALID_INPUT',
+  'HUMAN_DENIAL',
 ]);
 
 export type OutcomeCategory = z.infer<typeof OutcomeCategory>;
@@ -33,6 +37,7 @@ export const ReplayStatus = z.enum([
   'recoverable_failure',
   'hard_failure',
   'failure', // retained for generic/backwards compatibility
+  'denied',
 ]);
 
 export type ReplayStatus = z.infer<typeof ReplayStatus>;

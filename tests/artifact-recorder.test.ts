@@ -182,6 +182,7 @@ describe('ArtifactRecorder Unit Tests', () => {
 
     // Mock surface to observe replay pre-validation
     const mockSurface: Surface = {
+      sessionId: 'mock-recorder-session',
       observe: async () => ({
         url: 'http://127.0.0.1:3100/',
         timestamp: new Date().toISOString(),

@@ -63,6 +63,7 @@ export const AgentResultStatusSchema = z.enum([
   'failed',
   'timeout',
   'max_steps',
+  'denied',
 ]);
 
 export type AgentResultStatus = z.infer<typeof AgentResultStatusSchema>;

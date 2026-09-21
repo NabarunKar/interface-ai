@@ -209,6 +209,11 @@ npm run browser-surface:smoke -- http://localhost:3100
 │   │   ├── types.ts                # Recording options & step records
 │   │   ├── recorder.ts             # ArtifactRecorder component
 │   │   └── index.ts
+│   ├── handoff/                # Human handoff & escalation
+│   │   ├── types.ts                # HumanHandoff contract, HandoffResolution
+│   │   ├── state-machine.ts        # Explicit deterministic lifecycle
+│   │   ├── coordinator.ts          # HandoffCoordinator
+│   │   └── index.ts
 │   ├── replay/                 # Deterministic replay layer
 │   │   ├── types.ts                # ReplayOptions
 │   │   ├── checkpoint-evaluator.ts # Checkpoint condition evaluation on Surface
@@ -219,7 +224,7 @@ npm run browser-surface:smoke -- http://localhost:3100
 ├── scripts/
 │   ├── browser-surface-smoke.ts    # Headed browser smoke test
 │   └── discover.ts                 # Live discovery agent CLI with fallback support
-├── tests/                      # Vitest test suites (183 tests)
+├── tests/                      # Vitest test suites (205 tests)
 │   └── fixtures/                   # Canonical capability artifact fixtures
 ├── evidence/                   # Discovery run evidence and artifacts (gitignored)
 │   ├── discovery/                  # Run event logs (JSONL)
@@ -228,15 +233,61 @@ npm run browser-surface:smoke -- http://localhost:3100
 └── README.md
 ```
 
+## Human Handoff & Same-Session Escalation (Phase 1E)
+
+When automation encounters an action requiring confirmation (such as a high-risk credential reset or protected transaction), the system safely pauses automation and escalates control to a human operator.
+
+### 1. Why Human Escalation Exists
+Automation should never guess on high-consequence operations or perform unconfirmed side effects. Instead of failing blindly or crashing, the system establishes a clean confirmation boundary, captures sanitized context, and transfers operational control to a human.
+
+### 2. Same-Session Preservation
+Human escalation occurs on the **exact same live Surface/session**:
+- The technology-neutral `Surface` maintains a stable, immutable `sessionId`.
+- The human operator receives the active `Surface` reference—no browser is closed, no second browser is launched, and no detached session is created.
+- Continuity is verified by asserting that `sessionId` and underlying page references are identical before, during, and after handoff.
+
+### 3. Approval Flow Through Policy Boundary
+Human approval does **NOT** bypass policy enforcement:
+```
+Action Proposed
+  ↓
+PolicyEngine evaluates
+  ↓
+Returns `require_confirmation`
+  ↓
+Automation pauses; HumanHandoff created
+  ↓
+Human operator resolves:
+  ├── allow_once: stages single-use authorization on PolicyEnforcedSurface
+  ├── allow_and_remember: saves scoped record to ApprovalStore
+  └── deny: records denial; workflow terminates without executing action
+  ↓
+Action retried through PolicyEnforcedSurface
+  ↓
+PolicyEngine re-evaluates (NEVER bypassed)
+  ↓
+Ephemeral or remembered approval matches scope and permits execution
+  ↓
+Action executes on live surface; automation resumes
+```
+
+### 4. Structured Evidence Audit Trail
+Structured JSONL evidence events capture every transition:
+- `handoff_requested`: Automation paused (`controlMode: 'paused'`), recording blocked action, reason, and `sessionId`.
+- `human_takeover`: Human assumed control (`controlMode: 'human'`).
+- `approval_granted` / `approval_denied`: Operator decision and reasoning recorded.
+- `human_returned`: Control returned to automation.
+- `session_resumed`: Automation resumed on the live session (`controlMode: 'automation'`).
+
 ## What's Implemented
 
 - ✅ Documented architecture and technology choices
 - ✅ Local banking back-office target application
-- ✅ Surface abstraction interface (technology-neutral)
+- ✅ Surface abstraction interface (technology-neutral with stable `sessionId`)
 - ✅ Playwright-backed BrowserSurface for real Chromium browser interaction
 - ✅ Domain types with Zod validation (goals, actions, observations, artifacts, outcomes, evidence)
-- ✅ Policy engine with domain/action/route allowlisting
-- ✅ Policy-enforced surface wrapper and approval model
+- ✅ Policy engine with domain/action/route/target allowlisting and regex-validated `riskyRoutes`
+- ✅ Policy-enforced surface wrapper with ephemeral `allow_once` and durable `allow_and_remember` approval handling
 - ✅ Deterministic interpolation helpers and artifact validation
 - ✅ Evidence event model
 - ✅ Provider-neutral agent contracts (ModelClient, ModelDecision, AgentResult, state machine)
@@ -249,18 +300,19 @@ npm run browser-surface:smoke -- http://localhost:3100
 - ✅ **Independent DONE verification** (model claims ≠ system success)
 - ✅ **Model trust boundary** (all model output validated via Zod before reaching surface)
 - ✅ **File-based evidence logging** (JSONL)
-- ✅ **Deterministic agent & fallback tests** (183 tests, zero live API calls in tests)
+- ✅ **Deterministic agent & fallback tests** (205 tests across 16 test files)
 - ✅ **CLI for live discovery** (`npm run agent:discover`) with provider fallback and override flags
 - ✅ **Deterministic replay engine** (`src/replay/`): executes capability artifacts step-by-step with **zero LLM in the loop**
 - ✅ **Runtime entry point flexibility**: replay against ephemeral test environments without mutating artifact provenance
 - ✅ **Checkpoint evaluation**: pre/postconditions, success conditions, and business outcomes (`MEMBER_NOT_FOUND`)
-- ✅ **Granular replay taxonomy**: `success`, `business_outcome`, `invalid_artifact`, `invalid_input`, `recoverable_failure`, `hard_failure`
+- ✅ **Granular replay taxonomy**: `success`, `business_outcome`, `denied` (human control decision), `invalid_artifact`, `invalid_input`, `recoverable_failure`, `hard_failure`
 - ✅ **Live replay integration tests**: end-to-end replay verified against local Bank Operations Console in real Chromium
 - ✅ **Artifact recording & persistence** (`src/artifact/`): converts live discovery traces into reusable, validated `CapabilityArtifact` JSON files
 - ✅ **Parameterization**: abstracts concrete inputs (e.g. `10234`) into `{{memberId}}` using the existing interpolation contract
 - ✅ **Full discovery → artifact → replay lifecycle**: verified end-to-end against live Bank Operations Console
+- ✅ **Human handoff & same-session escalation** (`src/handoff/`): technology-neutral handoff, deterministic state machine, approval integration through policy boundary, and strict session identity verification
 
 ## What's NOT Implemented Yet
 
-- ❌ Human operator console / handoff
 - ❌ PII redaction
+

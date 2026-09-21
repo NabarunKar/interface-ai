@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { LocalPolicyEngine } from '../src/policy/engine.js';
 import type { Action } from '../src/domain/action.js';
-import type { PolicyConfig } from '../src/domain/policy.js';
+import { PolicyConfigSchema, type PolicyConfig } from '../src/domain/policy.js';
 
 const defaultConfig: PolicyConfig = {
   allowedDomains: ['localhost'],
@@ -147,4 +147,66 @@ describe('LocalPolicyEngine', () => {
     const result = engine.evaluate(action);
     expect(result.decision).toBe('allow');
   });
+
+  it('should reject invalid regex patterns in riskyRoutes schema', () => {
+    const invalidConfig = {
+      allowedDomains: ['localhost'],
+      allowedActions: ['navigate', 'click'],
+      riskyRoutes: ['[unclosed-bracket'],
+    };
+    expect(() => PolicyConfigSchema.parse(invalidConfig)).toThrow('Route patterns must be valid regular expressions');
+  });
+
+  it('should require confirmation when navigation matches a riskyRoute pattern', () => {
+    const riskyRouteConfig: PolicyConfig = {
+      allowedDomains: ['localhost'],
+      allowedActions: ['navigate', 'click', 'type'],
+      riskyRoutes: ['/reset-access', '^/member/.*/delete'],
+    };
+    const engine = new LocalPolicyEngine(riskyRouteConfig);
+    const action: Action = {
+      type: 'navigate',
+      value: 'http://localhost:3100/member/10234/reset-access',
+    };
+    const result = engine.evaluate(action);
+    expect(result.decision).toBe('require_confirmation');
+    expect(result.riskLevel).toBe('risky');
+    expect(result.reason).toContain('matches risky route pattern');
+  });
+
+  it('should require confirmation when action occurs on a riskyRoute context', () => {
+    const riskyRouteConfig: PolicyConfig = {
+      allowedDomains: ['localhost'],
+      allowedActions: ['navigate', 'click', 'type'],
+      riskyRoutes: ['/reset-access'],
+    };
+    const engine = new LocalPolicyEngine(riskyRouteConfig);
+    const action: Action = {
+      type: 'click',
+      target: { strategy: 'css', value: '#btn-confirm' },
+    };
+    const result = engine.evaluate(action, {
+      currentUrl: 'http://localhost:3100/member/10234/reset-access',
+    });
+    expect(result.decision).toBe('require_confirmation');
+    expect(result.riskLevel).toBe('risky');
+  });
+
+  it('should allow actions on non-matching routes when riskyRoutes is configured', () => {
+    const riskyRouteConfig: PolicyConfig = {
+      allowedDomains: ['localhost'],
+      allowedActions: ['navigate', 'click', 'type'],
+      riskyRoutes: ['/reset-access'],
+    };
+    const engine = new LocalPolicyEngine(riskyRouteConfig);
+    const action: Action = {
+      type: 'click',
+      target: { strategy: 'text', value: 'SEARCH' },
+    };
+    const result = engine.evaluate(action, {
+      currentUrl: 'http://localhost:3100/member?id=10234',
+    });
+    expect(result.decision).toBe('allow');
+  });
 });
+

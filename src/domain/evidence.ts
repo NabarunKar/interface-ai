@@ -49,9 +49,14 @@ export const EvidenceEventSchema = z.object({
     'approval_granted',
     'approval_denied',
     'approval_remembered',
+    // Handoff lifecycle events
+    'handoff_requested',
+    'session_resumed',
   ]),
   /** Step index in the artifact (if applicable) */
   stepIndex: z.number().int().nonnegative().optional(),
+  /** Session identifier associated with this event */
+  sessionId: z.string().optional(),
   /** The action associated with this event (if applicable) */
   action: ActionSchema.optional(),
   /** Who was in control */

@@ -33,4 +33,13 @@ export interface ReplayOptions {
    * and skips the initial surface.navigate(entryPoint) call.
    */
   skipInitialNavigation?: boolean;
+
+  /**
+   * Optional human handoff coordinator or handler for actions requiring confirmation.
+   * When provided and PolicyEnforcedSurface returns 'require_confirmation',
+   * automation pauses, hands off control to a human on the SAME session,
+   * and resumes if approved.
+   */
+  handoff?: import('../handoff/index.js').HandoffCoordinator | import('../handoff/index.js').HandoffHandler;
 }
+

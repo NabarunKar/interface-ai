@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
@@ -63,15 +64,25 @@ export class BrowserClosedError extends Error {
  * into Playwright-specific calls.
  */
 export class BrowserSurface implements Surface {
+  readonly sessionId: string;
   private readonly page: Page;
   private readonly context?: BrowserContext;
   private readonly browser?: Browser;
   private closed = false;
 
-  constructor(page: Page, context?: BrowserContext, browser?: Browser) {
+  constructor(page: Page, context?: BrowserContext, browser?: Browser, sessionId?: string) {
+    this.sessionId = sessionId ?? randomUUID();
     this.page = page;
     this.context = context;
     this.browser = browser;
+  }
+
+  /**
+   * Test/debug accessor for verifying underlying Playwright Page object identity.
+   * This is a concrete implementation detail and is NOT part of the technology-neutral Surface interface.
+   */
+  getDebugPage(): Page {
+    return this.page;
   }
 
   static async create(options: BrowserSurfaceOptions = {}): Promise<BrowserSurface> {

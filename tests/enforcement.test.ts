@@ -11,6 +11,7 @@ import type { ApprovalRecord } from '../src/domain/approval.js';
 // --- Mock Surface ---
 
 class MockSurface implements Surface {
+  readonly sessionId = 'mock-enforcement-session';
   calls: Array<{ method: string; args: unknown[] }> = [];
 
   async observe(): Promise<Observation> {

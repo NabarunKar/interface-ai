@@ -40,7 +40,13 @@ export interface PolicyContext {
  * the enforcement seam exists and is enforceable rather than advisory.
  */
 export class LocalPolicyEngine implements PolicyEngine {
-  constructor(private readonly config: PolicyConfig) {}
+  private readonly compiledAllowedRoutes: RegExp[];
+  private readonly compiledRiskyRoutes: RegExp[];
+
+  constructor(private readonly config: PolicyConfig) {
+    this.compiledAllowedRoutes = (config.allowedRoutes ?? []).map((pattern) => new RegExp(pattern));
+    this.compiledRiskyRoutes = (config.riskyRoutes ?? []).map((pattern) => new RegExp(pattern));
+  }
 
   evaluate(action: Action, context?: PolicyContext): PolicyResult {
     // Check action count limit
@@ -77,7 +83,7 @@ export class LocalPolicyEngine implements PolicyEngine {
       }
 
       // Check route patterns if configured
-      if (this.config.allowedRoutes && this.config.allowedRoutes.length > 0) {
+      if (this.compiledAllowedRoutes.length > 0) {
         const routeAllowed = this.isRouteAllowed(action.value);
         if (!routeAllowed) {
           return {
@@ -97,6 +103,37 @@ export class LocalPolicyEngine implements PolicyEngine {
           decision: 'deny',
           riskLevel: 'risky',
           reason: `Current page '${context.currentUrl}' is outside allowed domains`,
+        };
+      }
+    }
+
+    // Check if the current route or navigation target is risky
+    if (this.compiledRiskyRoutes.length > 0) {
+      const urlToCheck = action.type === 'navigate' ? action.value : context?.currentUrl;
+      if (urlToCheck && this.isRiskyRoute(urlToCheck)) {
+        return {
+          decision: 'require_confirmation',
+          riskLevel: 'risky',
+          reason: `Route '${urlToCheck}' matches risky route pattern`,
+        };
+      }
+    }
+
+    // Check if action target is risky
+    if (this.config.riskyTargets && action.target?.value) {
+      const targetVal = action.target.value;
+      const isTargetRisky = this.config.riskyTargets.some((pattern) => {
+        try {
+          return targetVal.includes(pattern) || new RegExp(pattern).test(targetVal);
+        } catch {
+          return targetVal.includes(pattern);
+        }
+      });
+      if (isTargetRisky) {
+        return {
+          decision: 'require_confirmation',
+          riskLevel: 'risky',
+          reason: `Action target '${action.target.value}' is classified as risky`,
         };
       }
     }
@@ -136,19 +173,20 @@ export class LocalPolicyEngine implements PolicyEngine {
   }
 
   private isRouteAllowed(url: string): boolean {
+    const path = this.extractPath(url);
+    return this.compiledAllowedRoutes.some((regex) => regex.test(path));
+  }
+
+  private isRiskyRoute(url: string): boolean {
+    const path = this.extractPath(url);
+    return this.compiledRiskyRoutes.some((regex) => regex.test(path));
+  }
+
+  private extractPath(url: string): string {
     try {
-      const parsed = new URL(url);
-      const path = parsed.pathname;
-      return (this.config.allowedRoutes ?? []).some((pattern) => {
-        const regex = new RegExp(pattern);
-        return regex.test(path);
-      });
+      return new URL(url).pathname;
     } catch {
-      // For relative paths
-      return (this.config.allowedRoutes ?? []).some((pattern) => {
-        const regex = new RegExp(pattern);
-        return regex.test(url);
-      });
+      return url.startsWith('/') ? url.split('?')[0] : url;
     }
   }
 }

@@ -436,11 +436,12 @@ Target Application (Bank Operations Console)
 4. **Checkpoint verification.** Pre- and post-conditions, success conditions, and declared expected business outcomes are evaluated against the live `Surface` via `evaluateCheckpoint()`.
 5. **Structured outcome taxonomy.** Replay returns a `ReplayResult` distinguishing:
    - `success`: Goal achieved and declared outputs extracted.
-   - `business_outcome`: Declared business checkpoint met (e.g. `MEMBER_NOT_FOUND`), not an error.
+   - `business_outcome`: Declared target application business checkpoint met (e.g. `MEMBER_NOT_FOUND`), not an error.
+   - `denied`: Human operator explicitly denied the proposed action during handoff (`category: 'HUMAN_DENIAL'`).
    - `invalid_artifact`: Malformed artifact schema or template syntax.
    - `invalid_input`: Missing, extra, or mistyped invocation parameters.
-   - `recoverable_failure`: Transient condition (e.g., timeout or confirmation required).
-   - `hard_failure`: Unrecoverable error (e.g., policy denial, element not found, failed checkpoint).
+   - `recoverable_failure`: Transient condition (e.g., timeout or session disconnect).
+   - `hard_failure`: Unrecoverable error (e.g., policy denial without human approval, element not found, failed checkpoint).
 6. **Evidence trail.** Every action, observation, checkpoint result, and failure during replay is recorded using `EvidenceLogger`.
 
 ---
@@ -465,6 +466,43 @@ ReplayEngine (loads persisted artifact, replays without LLM)
 2. **Reusable parameterization**: Translates concrete values (e.g., `10234`) into `{{memberId}}` using the existing interpolation contract.
 3. **Pre-persistence validation**: Validates the synthesized artifact with `CapabilityArtifactSchema` and `validateArtifactInterpolation()` before writing to disk.
 4. **Clean persistence & provenance**: Persists structured JSON under `evidence/artifacts/`, preserving discovery `sourceRunId` without logging or persisting credentials.
+
+---
+
+## 6.2 Human Handoff & Same-Session Escalation (Phase 1E)
+
+When automation reaches an action that cannot safely proceed without human confirmation (`require_confirmation` from `PolicyEnforcedSurface`), control escalates to a human operator:
+
+```text
+Automation
+  ↓
+navigate / type / click allowed actions
+  ↓
+reach confirmation / risky action (e.g. [ Reset Web Access Password ])
+  ↓
+PolicyEngine returns `require_confirmation`
+  ↓
+Automation pauses (`controlMode: 'paused'`)
+  ↓
+HumanHandoff created with sanitized context + live session identity
+  ↓
+Human takes over the SAME BrowserSurface/session (`controlMode: 'human'`)
+  ↓
+Human resolves:
+  ├── allow_once → stages ephemeral approval on PolicyEnforcedSurface
+  ├── allow_and_remember → persists scoped record in ApprovalStore
+  └── deny → halts execution without performing protected action
+  ↓
+PolicyEnforcedSurface re-evaluates policy (NEVER bypassed)
+  ↓
+Automation resumes on SAME live session (`controlMode: 'automation'`)
+```
+
+### Architectural Guarantees
+1. **Same-session continuity**: No browser or page is recreated. `surface.sessionId` remains identical before, during, and after handoff.
+2. **Policy boundary preservation**: `allow_once` and `allow_and_remember` decisions re-evaluate through `PolicyEngine` and `PolicyEnforcedSurface`. Human approval is never a generic bypass switch.
+3. **Deterministic lifecycle**: State transitions strictly follow `requested` → `waiting_for_human` → `approved`/`denied` → `resumed` → `completed`/`abandoned`.
+4. **Structured evidence audit**: Every transition emits JSONL events (`handoff_requested`, `human_takeover`, `approval_granted`/`approval_denied`, `human_returned`, `session_resumed`) capturing timestamps, `controlMode`, and `sessionId`.
 
 ---
 
@@ -636,8 +674,8 @@ Hundreds of tenants (financial institutions) each run ~20 applications. Many ten
 | File-based evidence logging (JSONL) | ✅ **Implemented** (Phase 1B-2) |
 | Artifact recording pipeline | ✅ **Implemented** (Phase 1D) |
 | Deterministic replay executor | ✅ **Implemented** (Phase 1C) |
-| Human operator console | **Not implemented** — state machine described, no UI |
-| Human handoff mechanism | **Not implemented** — control mode types defined |
+| Human handoff mechanism | ✅ **Implemented** (Phase 1E) |
+| Human operator console | **Not implemented** — state machine & coordinator implemented, no standalone UI |
 | PII redaction | **Not implemented** — design note only |
 | Multi-tenant override resolution | **Not implemented** — field exists, no logic |
 | Fault injection in target app | **Not implemented** — architecture supports it |

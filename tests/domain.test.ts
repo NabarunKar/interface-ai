@@ -192,6 +192,16 @@ describe('Domain Schemas', () => {
       expect(result.success).toBe(true);
     });
 
+    it('should accept a human denial outcome result', () => {
+      const result = ReplayResultSchema.safeParse({
+        status: 'denied',
+        category: 'HUMAN_DENIAL',
+        message: 'Action denied by human operator',
+        failedAtStep: 2,
+      });
+      expect(result.success).toBe(true);
+    });
+
     it('should accept a failure result', () => {
       const result = ReplayResultSchema.safeParse({
         status: 'failure',

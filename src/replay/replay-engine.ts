@@ -16,6 +16,7 @@ import {
 import { evaluateCheckpoint } from './checkpoint-evaluator.js';
 import type { ReplayOptions } from './types.js';
 import { PolicyDeniedError, ConfirmationRequiredError } from '../policy/enforced-surface.js';
+import { HandoffCoordinator } from '../handoff/index.js';
 
 /**
  * Deterministic Replay Engine.
@@ -269,44 +270,126 @@ export class ReplayEngine {
         }
 
         if (err instanceof ConfirmationRequiredError) {
+          if (mergedOptions.handoff) {
+            const coordinator =
+              typeof mergedOptions.handoff === 'function'
+                ? new HandoffCoordinator({
+                    handler: mergedOptions.handoff,
+                    evidence: logger,
+                  })
+                : mergedOptions.handoff;
+
+            const handoffResult = await coordinator.handleConfirmation({
+              action,
+              reason: err.policyResult.reason,
+              surface: this.surface,
+              runId,
+              stepIndex: step.index,
+              capabilityId: artifact.id,
+            });
+
+            if (handoffResult.status === 'resumed') {
+              // Action approved! Re-evaluate and execute through PolicyEnforcedSurface
+              try {
+                await this.executeAction(action);
+              } catch (retryErr) {
+                const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                emit({
+                  type: 'error',
+                  controlMode: 'automation',
+                  stepIndex: step.index,
+                  action,
+                  data: { error: retryMsg },
+                });
+                return {
+                  status: 'hard_failure',
+                  category: 'HARD_FAILURE',
+                  failedAtStep: step.index,
+                  message: `Action execution failed after approval at step ${step.index}: ${retryMsg}`,
+                  durationMs: Date.now() - startTime,
+                };
+              }
+            } else if (handoffResult.status === 'denied') {
+              emit({
+                type: 'run_completed',
+                controlMode: 'automation',
+                stepIndex: step.index,
+                message: `Replay terminated: action denied by human at step ${step.index}`,
+                data: { status: 'denied', reason: handoffResult.resolution?.reason },
+              });
+              return {
+                status: 'denied',
+                category: 'HUMAN_DENIAL',
+                failedAtStep: step.index,
+                message: `Action denied by human operator at step ${step.index}: ${handoffResult.resolution?.reason ?? 'No reason provided'}`,
+                durationMs: Date.now() - startTime,
+              };
+            } else if (handoffResult.status === 'session_unavailable') {
+              emit({
+                type: 'error',
+                controlMode: 'automation',
+                stepIndex: step.index,
+                message: handoffResult.error,
+                data: { status: 'session_unavailable' },
+              });
+              return {
+                status: 'recoverable_failure',
+                category: 'RECOVERABLE',
+                failedAtStep: step.index,
+                message: handoffResult.error ?? `Session unavailable at step ${step.index}`,
+                durationMs: Date.now() - startTime,
+              };
+            } else {
+              // abandoned
+              return {
+                status: 'hard_failure',
+                category: 'HARD_FAILURE',
+                failedAtStep: step.index,
+                message: handoffResult.error ?? `Human handoff abandoned at step ${step.index}`,
+                durationMs: Date.now() - startTime,
+              };
+            }
+          } else {
+            // No handoff configured -> original recoverable failure behavior preserved
+            emit({
+              type: 'action_rejected',
+              controlMode: 'automation',
+              stepIndex: step.index,
+              action,
+              data: { reason: err.message },
+            });
+            return {
+              status: 'recoverable_failure',
+              category: 'RECOVERABLE',
+              failedAtStep: step.index,
+              message: `Confirmation required at step ${step.index}: ${err.message}`,
+              durationMs: Date.now() - startTime,
+            };
+          }
+        } else {
+          // Generic execution error (when error was not handled by confirmation handoff)
+          const errorMsg = err instanceof Error ? err.message : String(err);
           emit({
-            type: 'action_rejected',
+            type: 'error',
             controlMode: 'automation',
             stepIndex: step.index,
             action,
-            data: { reason: err.message },
+            data: { error: errorMsg },
           });
+
+          // Determine if recoverable or hard failure
+          const isRecoverable =
+            errorMsg.toLowerCase().includes('timeout') ||
+            errorMsg.toLowerCase().includes('waiting for');
+
           return {
-            status: 'recoverable_failure',
-            category: 'RECOVERABLE',
+            status: isRecoverable ? 'recoverable_failure' : 'hard_failure',
+            category: isRecoverable ? 'RECOVERABLE' : 'HARD_FAILURE',
             failedAtStep: step.index,
-            message: `Confirmation required at step ${step.index}: ${err.message}`,
+            message: `Execution failed at step ${step.index} (${action.type}): ${errorMsg}`,
             durationMs: Date.now() - startTime,
           };
         }
-
-        // Generic execution error
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        emit({
-          type: 'error',
-          controlMode: 'automation',
-          stepIndex: step.index,
-          action,
-          data: { error: errorMsg },
-        });
-
-        // Determine if recoverable or hard failure
-        const isRecoverable =
-          errorMsg.toLowerCase().includes('timeout') ||
-          errorMsg.toLowerCase().includes('waiting for');
-
-        return {
-          status: isRecoverable ? 'recoverable_failure' : 'hard_failure',
-          category: isRecoverable ? 'RECOVERABLE' : 'HARD_FAILURE',
-          failedAtStep: step.index,
-          message: `Execution failed at step ${step.index} (${action.type}): ${errorMsg}`,
-          durationMs: Date.now() - startTime,
-        };
       }
 
       // E. Log action executed

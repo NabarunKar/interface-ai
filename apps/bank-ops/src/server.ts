@@ -6,6 +6,7 @@ import {
   renderAccountsPage,
   renderMemberNotFound,
   renderValidationError,
+  renderResetAccessConfirmationPage,
 } from './templates.js';
 
 export function createApp(): express.Express {
@@ -59,6 +60,26 @@ export function createApp(): express.Express {
     }
 
     res.type('html').send(renderAccountsPage(member));
+  });
+
+  // Reset web access password (protected test-only action)
+  app.post('/member/:id/reset-access', express.urlencoded({ extended: true }), (req, res) => {
+    const id = req.params.id;
+
+    if (!isValidMemberId(id)) {
+      res.status(400).type('html').send(
+        renderValidationError(`Invalid Member ID format: "${id}".`)
+      );
+      return;
+    }
+
+    const member = findMember(id);
+    if (!member) {
+      res.status(404).type('html').send(renderMemberNotFound(id));
+      return;
+    }
+
+    res.type('html').send(renderResetAccessConfirmationPage(member));
   });
 
   return app;

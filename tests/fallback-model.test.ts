@@ -398,6 +398,7 @@ describe('DiscoveryAgent provider-neutral integration with FallbackModelClient',
     const fallbackModel = new FallbackModelClient(primary, fallback);
 
     const mockSurface: Surface = {
+      sessionId: 'mock-fallback-session',
       observe: vi.fn().mockResolvedValue({
         url: 'http://localhost:3100/member/10234/accounts',
         title: 'Bank Operations Console',

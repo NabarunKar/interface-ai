@@ -152,7 +152,27 @@ export function renderMemberPage(member: Member): string {
     <div style="margin-top: 16px;">
       <a href="/member/${escapeHtml(member.memberId)}/accounts">[ View Accounts ]</a>
     </div>
+    <div style="margin-top: 20px; padding: 12px; border: 1px dashed #808080;">
+      <div style="font-weight: bold; margin-bottom: 8px; color: #800000;">SECURITY &amp; ACCESS</div>
+      <form method="POST" action="/member/${escapeHtml(member.memberId)}/reset-access">
+        <button type="submit" id="btn-reset-access" style="background: #d4d0c8; color: #800000; font-weight: bold; border: 2px outset #808080;">
+          [ Reset Web Access Password ]
+        </button>
+      </form>
+    </div>
     <div class="nav-link"><a href="/">&larr; Back to Search</a></div>
+  `);
+}
+
+export function renderResetAccessConfirmationPage(member: Member): string {
+  return wrap(`
+    <div class="section-title">SECURITY &mdash; WEB ACCESS RESET</div>
+    <div class="info-msg" id="reset-success-banner" style="color: #006000; font-weight: bold; padding: 8px; border: 1px solid #008000; background: #e8ffe8; margin: 8px 0;">
+      TEMPORARY ACCESS CODE GENERATED FOR ${escapeHtml(member.name)}: TEST-RESET-9999
+    </div>
+    <div class="info-row"><span class="info-label">Member ID:</span> ${escapeHtml(member.memberId)}</div>
+    <div class="info-row"><span class="info-label">Status:</span> Temporary Access Code Active</div>
+    <div class="nav-link"><a href="/member?id=${escapeHtml(member.memberId)}">&larr; Back to Member</a></div>
   `);
 }
 

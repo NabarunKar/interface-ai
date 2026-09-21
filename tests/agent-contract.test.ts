@@ -83,7 +83,7 @@ describe('Agent contract', () => {
   });
 
   it('should validate serializable agent result statuses', () => {
-    for (const status of ['success', 'business_outcome', 'stuck', 'needs_human', 'failed', 'timeout', 'max_steps']) {
+    for (const status of ['success', 'business_outcome', 'stuck', 'needs_human', 'failed', 'timeout', 'max_steps', 'denied']) {
       const result = AgentResultSchema.safeParse({
         status,
         goal,

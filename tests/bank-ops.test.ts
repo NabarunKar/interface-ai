@@ -114,4 +114,23 @@ describe('Bank Ops - Target Application', () => {
     const html = await res.text();
     expect(html).toContain('VALIDATION ERROR');
   });
+
+  it('should render reset web access confirmation page on POST /member/:id/reset-access', async () => {
+    const res = await fetch(`${baseUrl}/member/10234/reset-access`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('SECURITY &mdash; WEB ACCESS RESET');
+    expect(html).toContain('TEMPORARY ACCESS CODE GENERATED FOR Jane Doe');
+    expect(html).toContain('reset-success-banner');
+  });
+
+  it('should return 404 for reset access on nonexistent member', async () => {
+    const res = await fetch(`${baseUrl}/member/99999/reset-access`, {
+      method: 'POST',
+    });
+    expect(res.status).toBe(404);
+  });
 });
+

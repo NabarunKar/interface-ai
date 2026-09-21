@@ -72,6 +72,7 @@ export interface EnforcementContext {
  */
 export class PolicyEnforcedSurface implements Surface {
   private actionCount = 0;
+  private readonly ephemeralApprovals: ApprovalScope[] = [];
 
   constructor(
     private readonly underlying: Surface,
@@ -79,6 +80,36 @@ export class PolicyEnforcedSurface implements Surface {
     private readonly approvalStore?: ApprovalStore,
     private readonly contextProvider?: () => EnforcementContext,
   ) {}
+
+  /** Forward technology-neutral session identity of the underlying surface */
+  get sessionId(): string {
+    return this.underlying.sessionId;
+  }
+
+  /** Direct reference to underlying Surface for same-session handoff interaction */
+  getUnderlying(): Surface {
+    return this.underlying;
+  }
+
+  /** Optional reference to the configured approval store */
+  getApprovalStore(): ApprovalStore | undefined {
+    return this.approvalStore;
+  }
+
+  /**
+   * Stage an ephemeral (one-time) approval for a specific scope.
+   * This does NOT bypass PolicyEngine evaluation: the action is still evaluated
+   * by PolicyEngine and, if 'require_confirmation' is returned, this staged approval
+   * is consumed strictly once.
+   */
+  stageEphemeralApproval(scope: ApprovalScope): void {
+    this.ephemeralApprovals.push(scope);
+  }
+
+  /** Clear any pending ephemeral approvals */
+  clearEphemeralApprovals(): void {
+    this.ephemeralApprovals.length = 0;
+  }
 
   // --- Pass-through (non-mutating) methods ---
 
@@ -145,9 +176,10 @@ export class PolicyEnforcedSurface implements Surface {
     }
 
     if (result.decision === 'require_confirmation') {
-      // Check for a matching remembered approval
+      const scope = this.buildApprovalScope(action);
+
+      // 1. Check for a matching remembered approval in persistent store
       if (this.approvalStore) {
-        const scope = this.buildApprovalScope(action);
         const approval = await this.approvalStore.findMatching(scope);
         if (approval) {
           // Remembered approval found and valid — proceed
@@ -155,6 +187,18 @@ export class PolicyEnforcedSurface implements Surface {
           return;
         }
       }
+
+      // 2. Check for a matching ephemeral (allow_once) approval
+      const ephemeralIndex = this.ephemeralApprovals.findIndex((staged) =>
+        matchesApprovalScope(staged, scope)
+      );
+      if (ephemeralIndex !== -1) {
+        // Ephemeral approval consumed — proceed strictly once
+        this.ephemeralApprovals.splice(ephemeralIndex, 1);
+        this.actionCount++;
+        return;
+      }
+
       throw new ConfirmationRequiredError(action, result);
     }
 
@@ -171,7 +215,7 @@ export class PolicyEnforcedSurface implements Surface {
     };
   }
 
-  private buildApprovalScope(action: Action): ApprovalScope {
+  public buildApprovalScope(action: Action): ApprovalScope {
     const ext = this.contextProvider?.() ?? {};
     const scope: Record<string, string | undefined> = {
       actionType: action.type,
@@ -193,3 +237,17 @@ export class PolicyEnforcedSurface implements Surface {
     }
   }
 }
+
+/**
+ * Check if a staged approval scope covers a queried action scope.
+ * Any field specified in `staged` must match the corresponding field in `query`.
+ */
+export function matchesApprovalScope(staged: ApprovalScope, query: ApprovalScope): boolean {
+  if (staged.actionType !== undefined && staged.actionType !== query.actionType) return false;
+  if (staged.capabilityId !== undefined && staged.capabilityId !== query.capabilityId) return false;
+  if (staged.targetApp !== undefined && staged.targetApp !== query.targetApp) return false;
+  if (staged.tenant !== undefined && staged.tenant !== query.tenant) return false;
+  if (staged.route !== undefined && staged.route !== query.route) return false;
+  return true;
+}
+

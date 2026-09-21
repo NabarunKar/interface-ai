@@ -14,6 +14,7 @@ describe('ReplayEngine (Deterministic Replay Unit Tests)', () => {
   beforeEach(() => {
     evidence = new InMemoryEvidenceLogger();
     mockSurface = {
+      sessionId: 'mock-replay-session',
       observe: vi.fn().mockResolvedValue({
         url: 'http://localhost:3100/',
         title: 'Bank Operations Console',
@@ -225,5 +226,61 @@ describe('ReplayEngine (Deterministic Replay Unit Tests)', () => {
     expect(result.status).toBe('recoverable_failure');
     expect(result.category).toBe('RECOVERABLE');
     expect(result.failedAtStep).toBe(1);
+  });
+
+  it('regression: human deny vs application business outcome semantics', async () => {
+    // Policy that requires confirmation for 'type'
+    const policy = new LocalPolicyEngine({
+      allowedActions: ['read', 'wait', 'navigate', 'type'],
+      riskyActions: ['type'],
+      allowedDomains: ['localhost', '127.0.0.1'],
+    });
+
+    const enforcedSurface = new PolicyEnforcedSurface(mockSurface, policy);
+    const engine = new ReplayEngine(enforcedSurface, { evidence });
+
+    const denyResult = await engine.replay(
+      memberSavingsBalanceArtifact,
+      { memberId: '10234' },
+      {
+        handoff: async () => ({
+          decision: 'deny',
+          reason: 'Manual operator denied action',
+        }),
+      },
+    );
+
+    // 1. Human deny does not execute the protected action
+    expect(mockSurface.type).not.toHaveBeenCalled();
+
+    // 2. Human deny is NOT classified as business_outcome
+    expect(denyResult.status).not.toBe('business_outcome');
+    expect(denyResult.category).not.toBe('BUSINESS_OUTCOME');
+
+    // 3. The returned result is explicit and terminal
+    expect(denyResult.status).toBe('denied');
+    expect(denyResult.category).toBe('HUMAN_DENIAL');
+    expect(denyResult.failedAtStep).toBe(0);
+    expect(denyResult.message).toContain('Action denied by human operator at step 0');
+    expect(denyResult.message).toContain('Manual operator denied action');
+
+    // 4. MEMBER_NOT_FOUND is still classified as business_outcome
+    vi.mocked(mockSurface.currentUrl).mockResolvedValue('http://localhost:3100/member?id=99999');
+    vi.mocked(mockSurface.pageText)
+      .mockResolvedValueOnce('MEMBER SEARCH\nMember ID:\nSEARCH')
+      .mockResolvedValue('MEMBER SEARCH\nNo member found with ID: 99999');
+
+    const openPolicy = new LocalPolicyEngine({
+      allowedActions: ['read', 'wait', 'navigate', 'type', 'click'],
+      allowedDomains: ['localhost', '127.0.0.1'],
+    });
+    const openEnforced = new PolicyEnforcedSurface(mockSurface, openPolicy);
+    const openEngine = new ReplayEngine(openEnforced, { evidence: new InMemoryEvidenceLogger() });
+
+    const businessResult = await openEngine.replay(memberSavingsBalanceArtifact, { memberId: '99999' });
+
+    expect(businessResult.status).toBe('business_outcome');
+    expect(businessResult.category).toBe('BUSINESS_OUTCOME');
+    expect(businessResult.outputs).toEqual({ code: 'MEMBER_NOT_FOUND' });
   });
 });
