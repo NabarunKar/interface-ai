@@ -10,7 +10,8 @@
     "bank-ops": "tsx apps/bank-ops/src/server.ts",
     "browser-surface:smoke": "tsx scripts/browser-surface-smoke.ts --headed",
     "lint": "tsc --noEmit",
-    "agent:discover": "tsx scripts/discover.ts"
+    "agent:discover": "tsx scripts/discover.ts",
+    "agent:replay": "tsx scripts/replay.ts"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

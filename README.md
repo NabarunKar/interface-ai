@@ -155,6 +155,57 @@ Options:
 
 The run prints a structured `AgentResult` and saves evidence to `evidence/discovery/`.
 
+## Deterministic Replay
+
+Replay a persisted capability artifact **without any LLM or API credentials**:
+
+```bash
+npm run agent:replay -- \
+  --artifact evidence/artifacts/lookup-member-savings-balance.json \
+  --param memberId=10234
+```
+
+The replay CLI starts an ephemeral Bank Operations server, loads and validates the artifact, replays it step-by-step through the existing ReplayEngine, and prints the structured result.
+
+### Business Outcome Example
+
+```bash
+npm run agent:replay -- \
+  --artifact evidence/artifacts/lookup-member-savings-balance.json \
+  --param memberId=99999
+```
+
+Returns `status: "business_outcome"` with `code: "MEMBER_NOT_FOUND"` — a legitimate answer, not a failure.
+
+### Options
+
+- `--artifact <path>` — path to a persisted CapabilityArtifact JSON (required)
+- `--param key=value` — invocation parameter (repeatable for multiple params)
+- `--url <url>` — use an existing server instead of starting an ephemeral one
+- `--headed` — show the browser window during replay
+
+### Exit Codes
+
+- `0` — success or expected business outcome
+- `1` — replay failure, invalid artifact, or invalid input
+
+### Demo Path (Discovery → Replay)
+
+```bash
+# 1. Discovery (requires API keys):
+npm run agent:discover -- --goal "Find member 10234 and return their current savings balance"
+
+# 2. Replay the resulting artifact (no API keys needed):
+npm run agent:replay -- \
+  --artifact evidence/artifacts/lookup-member-savings-balance.json \
+  --param memberId=10234
+
+# 3. Replay with a different member (no API keys needed):
+npm run agent:replay -- \
+  --artifact evidence/artifacts/lookup-member-savings-balance.json \
+  --param memberId=10235
+```
+
 ## BrowserSurface Headed Smoke Test
 
 ```bash
