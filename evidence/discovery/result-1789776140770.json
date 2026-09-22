@@ -1,0 +1,16 @@
+{
+  "status": "success",
+  "goal": {
+    "id": "goal-1789776108124",
+    "description": "Find member 10234 and return their current savings balance",
+    "targetApp": "bank-ops",
+    "entryPoint": "http://127.0.0.1:60997",
+    "maxSteps": 15
+  },
+  "stepCount": 3,
+  "runId": "discovery-1789776108124",
+  "reason": "Savings balance verified on accounts page: $8,920.14",
+  "outputs": {
+    "savingsBalance": "$8,920.14"
+  }
+}

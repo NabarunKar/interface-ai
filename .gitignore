@@ -3,7 +3,7 @@ dist/
 *.tsbuildinfo
 .env.local
 evidence/runs/
-evidence/discovery/
+evidence/replays/
 evidence/*.png
 .env
 .env.*

@@ -71,9 +71,6 @@ export const memberSavingsBalanceArtifact: CapabilityArtifact = {
       source: {
         strategy: 'css',
         value: 'tr:nth-child(3) td:nth-child(3)',
-        fallbacks: [
-          { strategy: 'text', value: '$8,920.14' },
-        ],
       },
       type: 'string',
     },
