@@ -28,6 +28,17 @@ import { ArtifactRecorder } from '../src/artifact/index.js';
 import type { Goal } from '../src/domain/goal.js';
 
 // ---------------------------------------------------------------------------
+// Environment setup
+// ---------------------------------------------------------------------------
+
+// Automatically load local .env if present (built into Node.js 20.12+)
+try {
+  process.loadEnvFile?.();
+} catch {
+  // Silently ignore if .env does not exist (e.g. CI or container environments)
+}
+
+// ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
