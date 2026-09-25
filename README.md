@@ -5,6 +5,7 @@ A capture-once, replay-many computer-use system for legacy back-office banking U
 **The model discovers the workflow once. The artifact becomes a reusable capability. Deterministic replay executes the capability in production with zero model calls.**
 
 See [REPORT.md](./REPORT.md) for the complete engineering design report and trade-off analysis.
+
 Walkthrough video: https://www.youtube.com/watch?v=RpwUyZOu-1E
 
 ---
