@@ -1,369 +1,188 @@
 # Computer-Use Automation System
 
-A computer-use automation system that enables AI agents to operate legacy back-office applications by driving their UI — observing the screen, clicking, typing, and navigating — the way a human operator would.
+A capture-once, replay-many computer-use system for legacy back-office banking UIs. Built with TypeScript on Node, Playwright/Chromium as the live browser surface, Zod for domain and model validation, and an Express server-rendered "Bank Operations Console" (`apps/bank-ops/`) as the automation target.
 
-**The model discovers. The artifact becomes a reusable capability. Deterministic replay is how the capability is invoked in production.**
+**The model discovers the workflow once. The artifact becomes a reusable capability. Deterministic replay executes the capability in production with zero model calls.**
 
-## Architecture Overview
+See [REPORT.md](./REPORT.md) for the complete engineering design report and trade-off analysis.
 
-```
-Goal
-  ↓
-DiscoveryAgent (observe → decide → validate → policy → execute → loop)
-  ↓
-ModelClient (interface)
-  ↓
-FallbackModelClient
-  ├── GeminiModelClient (primary: @google/genai, gemini-3.8-flash)
-  └── TamuModelClient (fallback: OpenAI-compatible chat completions)
-  ↓
-ModelDecision (validated via Zod)
-  ↓
-PolicyEnforcedSurface (enforces domain/action allowlists)
-  ↓
-BrowserSurface (Playwright)
-  ↓
-Target Application (Bank Operations Console)
-```
+---
 
-See [PROJECT_SPEC.md](./PROJECT_SPEC.md) for the full architectural specification.
+## Quickstart & Reproducibility Path
 
-## Prerequisites
-
-- **Node.js** ≥ 18
-- **npm** ≥ 9
-- **Playwright Chromium**: `npx playwright install chromium`
-- **LLM Credentials** (for live discovery runs only):
-  - Primary (Gemini): `GEMINI_API_KEY` (and optional `GEMINI_MODEL`, default: `gemini-3.8-flash`)
-  - Fallback (TAMU): `TAMU_API_KEY`, `TAMU_BASE_URL`, `TAMU_MODEL` (supplied by developer)
-
-## Installation
+### 1. Installation
 
 ```bash
 npm install
 npx playwright install chromium
 ```
 
-## Running the Target Application
+### 2. Live LLM Discovery (Requires API Credentials)
 
-The Bank Operations Console is a local server-rendered web app used as the automation target:
+Discovery uses a real multimodal LLM to explore the UI, reach the goal, independently verify page state, and synthesize a reusable capability artifact.
 
+Configure credentials in `.env` (see `.env.example`):
 ```bash
-npm run bank-ops
-```
-
-Then open [http://localhost:3100](http://localhost:3100) in your browser.
-
-**Available workflows:**
-- Search for a member by ID (try: `10234`, `10235`, `99999`)
-- View member information
-- View account balances
-
-## Running Tests
-
-```bash
-npm test
-```
-
-This runs all tests via Vitest, covering:
-- Target application routes and responses
-- Domain schema validation (Zod)
-- Policy engine allow/deny decisions
-- Evidence logger functionality
-- BrowserSurface integration via Playwright/Chromium
-- Agent contract validation (ModelDecision, AgentResult, state machine)
-- **Discovery agent loop** — 14 deterministic tests using FakeModelClient against real browser + real bank-ops
-
-```bash
-npx tsc --noEmit    # type-check without emitting
-```
-
-Run only the discovery agent tests:
-
-```bash
-npm test -- tests/discovery-agent.test.ts
-```
-
-## Live Discovery Run
-
-The discovery agent uses a real LLM to genuinely operate the Bank Operations Console.
-
-### Provider Architecture & Fallback Semantics
-
-The discovery agent interacts solely with the provider-neutral `ModelClient` interface. Provider adapters and fallback are decoupled from the agent core:
-
-```
-DiscoveryAgent
-    ↓
-ModelClient (interface)
-    ↓
-FallbackModelClient
-    ├── GeminiModelClient (primary: @google/genai, gemini-3.8-flash)
-    └── TamuModelClient (fallback: OpenAI-compatible chat completions)
-```
-
-- **Gemini (`GeminiModelClient`)**: Primary provider using `@google/genai` with default model `gemini-3.8-flash`.
-- **TAMU AI Chat (`TamuModelClient`)**: Fallback provider using an OpenAI-compatible `/chat/completions` endpoint with JSON mode.
-- **Fallback Policy (`FallbackModelClient`)**:
-  - Automatically falls back to TAMU on **transient provider availability failures**: HTTP 429, 500, 502, 503, 504, network timeouts, connection resets/refusals.
-  - **Does NOT fall back** on non-transient configuration or client errors: HTTP 400, 401, 403, 404, 422, invalid request schema, or missing credentials. These fail fast to expose actionable configuration errors.
-  - If TAMU is not configured in the environment, the system runs with Gemini alone. If Gemini fails and TAMU is unconfigured, Gemini's error is reported directly without searching external locations.
-
-### Configuration
-
-Set credentials and provider selections via environment variables (or repository `.env`):
-
-```bash
-# Gemini Provider (Primary)
-GEMINI_API_KEY=
+GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-3.8-flash
 
-# TAMU AI Chat Provider (Fallback - supplied by developer)
-TAMU_API_KEY=
-TAMU_BASE_URL=
-TAMU_MODEL=
-
-# Provider Selection (optional overrides)
-LLM_PRIMARY_PROVIDER=gemini
-LLM_FALLBACK_PROVIDER=tamu
+# Optional fallback provider:
+TAMU_API_KEY=your_tamu_key
+TAMU_BASE_URL=https://chat-api.tamu.ai/api
+TAMU_MODEL=your_model
 ```
 
-> **Note**: Do not commit real credentials. `TAMU_BASE_URL` and `TAMU_MODEL` are deployment-specific and must be provided by the developer.
-
-### Running Discovery
-
+Run discovery (starts an ephemeral Bank Operations server automatically, or connects to `--url`):
 ```bash
-# Run with configured environment variables:
 npm run agent:discover -- \
-  --goal "Find member 10234 and return their current savings balance"
+  --goal "Find member 10234 and return their current savings balance" \
+  --headed
 ```
 
-By default, the CLI starts an ephemeral Bank Operations server on a random port and tears it down when done. Use `--url` to override with an already-running instance:
+The discovery CLI automatically loads `.env` if present, drives Chromium, verifies the balance on the live DOM, and writes the parameterized artifact to `evidence/artifacts/lookup-member-savings-balance.json`.
+
+### 3. Deterministic Replay (Zero LLM / No API Credentials)
+
+Replay executes the persisted artifact step-by-step with **no LLM in the loop**:
 
 ```bash
-npm run bank-ops &   # start server
-npm run agent:discover -- --goal "..." --url http://localhost:3100
-```
-
-Options:
-- `--goal "<text>"` — the natural-language goal (required)
-- `--url <url>` — use an existing server instead of starting one
-- `--headed` — show the browser window during the run
-- `--maxSteps <n>` — maximum action steps (default: 15)
-- `--provider <gemini|tamu>` — explicitly force a single provider (bypasses fallback)
-- `--model <name>` — override the model name for the selected provider
-
-The run prints a structured `AgentResult` and saves evidence to `evidence/discovery/`.
-
-## Deterministic Replay
-
-Replay a persisted capability artifact **without any LLM or API credentials**:
-
-```bash
+# Replay for member 10234 (extracts $8,920.14 in ~200ms):
 npm run agent:replay -- \
   --artifact evidence/artifacts/lookup-member-savings-balance.json \
   --param memberId=10234
-```
 
-The replay CLI starts an ephemeral Bank Operations server, loads and validates the artifact, replays it step-by-step through the existing ReplayEngine, and prints the structured result.
+# Replay for a different member (proves artifact is a reusable capability, not a static recording):
+npm run agent:replay -- \
+  --artifact evidence/artifacts/lookup-member-savings-balance.json \
+  --param memberId=10235
 
-### Business Outcome Example
-
-```bash
+# Replay for a nonexistent member (returns expected business outcome, exit code 0):
 npm run agent:replay -- \
   --artifact evidence/artifacts/lookup-member-savings-balance.json \
   --param memberId=99999
 ```
 
-Returns `status: "business_outcome"` with `code: "MEMBER_NOT_FOUND"` — a legitimate answer, not a failure.
-
-### Options
-
-- `--artifact <path>` — path to a persisted CapabilityArtifact JSON (required)
-- `--param key=value` — invocation parameter (repeatable for multiple params)
-- `--url <url>` — use an existing server instead of starting an ephemeral one
-- `--headed` — show the browser window during replay
-
-### Exit Codes
-
-- `0` — success or expected business outcome
-- `1` — replay failure, invalid artifact, or invalid input
-
-### Demo Path (Discovery → Replay)
-
+**Proving zero LLM dependency**: Replay succeeds even with all provider credentials completely removed from the environment:
 ```bash
-# 1. Discovery (requires API keys):
-npm run agent:discover -- --goal "Find member 10234 and return their current savings balance"
-
-# 2. Replay the resulting artifact (no API keys needed):
-npm run agent:replay -- \
+env -u GEMINI_API_KEY -u TAMU_API_KEY npm run agent:replay -- \
   --artifact evidence/artifacts/lookup-member-savings-balance.json \
   --param memberId=10234
-
-# 3. Replay with a different member (no API keys needed):
-npm run agent:replay -- \
-  --artifact evidence/artifacts/lookup-member-savings-balance.json \
-  --param memberId=10235
 ```
 
-## BrowserSurface Headed Smoke Test
+---
+
+## Target Application
+
+The Bank Operations Console is an internal server-rendered banking application:
 
 ```bash
-npm run bank-ops &
-npm run browser-surface:smoke -- http://localhost:3100
+npm run bank-ops
 ```
+Access at [http://localhost:3100](http://localhost:3100). Test members: `10234` (Jane Doe, Savings: $8,920.14), `10235` (John Smith, Savings: $15,340.89), `99999` (nonexistent member).
+
+---
+
+## Architecture Overview
+
+```
+DISCOVERY (LLM present)
+  Goal → DiscoveryAgent (observe → decide → validate → policy → execute)
+       → ModelClient (Gemini primary, TAMU fallback) → ModelDecision (Zod)
+       → PolicyEnforcedSurface → BrowserSurface (Playwright) → Bank Ops Console
+       → GoalVerifier (independent DONE check) → ArtifactRecorder → evidence/artifacts/*.json
+
+REPLAY (LLM absent)
+  CapabilityArtifact + params → Pre-flight Validation & Interpolation
+       → ReplayEngine (strict ordered execution, no planning)
+       → PolicyEnforcedSurface → BrowserSurface → Bank Ops Console
+       → ReplayResult + JSONL evidence
+```
+
+- **Surface Abstraction**: Technology-neutral contract exposing an immutable `sessionId`. Domain types, policies, and handoff never import Playwright handles.
+- **Provider Architecture**: Behind a technology-neutral `ModelClient` interface. `FallbackModelClient` routes transient availability failures (429/500/502/503/504, timeouts) to TAMU AI Chat, while client errors (400/401/403) fail fast.
+- **Independent Verification**: A model's `DONE` claim is never trusted. `GoalVerifier` independently verifies live DOM state before an artifact is recorded.
+- **Artifact Parameterization**: Replaces concrete values with `{{paramName}}` substitutions. Artifacts define inputs, ordered steps, postconditions, output selectors, expected business outcomes, and policy constraints.
+
+---
+
+## Safety & Policy Enforcement
+
+- **Policy Boundary**: `PolicyEnforcedSurface` intercepts mutating actions (`click`, `type`, `navigate`) and evaluates them via `PolicyEngine` against allowed domains, action allowlists, and risky target rules. Passive reads pass through.
+- **Model Trust Boundary**: Model outputs arrive as untrusted `unknown` types and are strictly parsed through Zod before reaching any surface call. The model never receives shell or browser handles.
+- **Result Taxonomy**: Callers receive explicit structured outcomes: `success`, `business_outcome` (e.g. `MEMBER_NOT_FOUND`, exit 0), `denied` (human refusal), `invalid_input`, `invalid_artifact`, `recoverable_failure`, and `hard_failure`.
+
+---
+
+## Human Handoff & Same-Session Escalation
+
+When policy encounters an action requiring confirmation (e.g., clicking `[ Reset Web Access Password ]`), automation pauses and delegates to `HandoffCoordinator`:
+- **`allow_once`**: Stages a single-use authorization token consumed strictly once on retry through policy evaluation.
+- **`allow_and_remember`**: Saves a scoped, expirable record in `ApprovalStore` for exact matching contexts.
+- **`deny`**: Replay halts with terminal outcome `status: "denied"` / `category: "HUMAN_DENIAL"`. The protected action never executes.
+- **Same-Session Preservation**: Integration tests (`tests/same-session-handoff-integration.test.ts`) verify that the active `sessionId` and Playwright `Page` reference (`Object.is`) remain strictly identical before, during, and after handoff. No second browser, context, or tab is created.
+
+*Scope note*: Live same-session handoff is wired into **replay**. Discovery currently treats confirmation boundaries as terminal `needs_human` conditions.
+
+---
+
+## Automated Verification
+
+```bash
+# Run the full automated test suite (unit, contract, policy, replay, and browser integration):
+npm test
+
+# Run TypeScript type check:
+npx tsc --noEmit
+
+# Run only same-session handoff integration tests:
+npx vitest run tests/same-session-handoff-integration.test.ts
+```
+
+---
+
+## Evidence & Audit Trail
+
+Audit evidence is committed directly in the repository to demonstrate real executions:
+- **`evidence/artifacts/`**: Persisted, schema-validated capability artifacts (`lookup-member-savings-balance.json`).
+- **`evidence/discovery/`**: Canonical discovery run (`run-1789776107643.jsonl`, `result-1789776140770.json`) and real-world fallback error capture (`run-1789775851115.jsonl`, `result-1789775862122.json`).
+- **`evidence/replay/`**: Deterministic replay logs for successful balance extraction (`replay-success-10234.jsonl`) and business outcomes (`replay-member-not-found-99999.jsonl`).
+- Transient local test runs (`evidence/runs/`, `evidence/replays/`) are ignored by `.gitignore`.
+
+---
 
 ## Project Structure
 
 ```
 ├── apps/
-│   └── bank-ops/               # Target banking application
-│       └── src/
-│           ├── server.ts            # Express server
-│           ├── templates.ts         # Server-rendered HTML
-│           └── data/
-│               └── members.ts       # Deterministic fixture data
+│   └── bank-ops/               # Target Express banking application & fixture data
 ├── src/
-│   ├── agent/                  # Agent layer
-│   │   ├── types.ts                # ModelClient, ModelDecision, AgentResult, state machine
-│   │   ├── validation.ts           # parseModelDecision, buildModelInput
-│   │   ├── fake-model.ts           # Deterministic FakeModelClient for tests
-│   │   ├── discovery-agent.ts      # Core discovery loop
-│   │   ├── gemini-model.ts         # Gemini adapter (primary provider)
-│   │   ├── tamu-model.ts           # TAMU AI Chat adapter (OpenAI-compatible fallback)
-│   │   ├── fallback-model.ts       # FallbackModelClient with transient error handling
-│   │   ├── provider-error.ts       # Provider error taxonomy and classification
-│   │   ├── provider-factory.ts     # Provider resolution and fallback construction
-│   │   ├── prompt-utils.ts         # Shared provider-neutral prompt rendering
-│   │   ├── system-prompt.ts        # LLM system prompt
-│   │   └── goal-verifier.ts        # Independent DONE verification
-│   ├── domain/                 # Core types & Zod schemas
-│   │   ├── action.ts               # Actions, locators, target strategies
-│   │   ├── goal.ts                 # Goal representation
-│   │   ├── observation.ts          # Surface observations
-│   │   ├── outcome.ts              # Replay results, error taxonomy
-│   │   ├── artifact.ts             # Capability artifact schema
-│   │   ├── policy.ts               # Policy config & decision types
-│   │   ├── evidence.ts             # Evidence event model
-│   │   └── approval.ts             # Approval decisions and scoped records
-│   ├── surface/                # Surface abstraction layer
-│   │   ├── types.ts                # Technology-neutral Surface interface
-│   │   └── browser-surface.ts      # Playwright adapter
-│   ├── policy/                 # Policy enforcement
-│   │   ├── engine.ts               # Configurable local policy engine
-│   │   ├── enforced-surface.ts     # PolicyEnforcedSurface wrapper
-│   │   └── approval-store.ts       # Remembered approval store
-│   ├── evidence/               # Evidence/event logging
-│   │   ├── logger.ts               # In-memory evidence logger
-│   │   └── file-logger.ts          # JSONL file-based logger
-│   ├── artifact/               # Artifact recording & persistence
-│   │   ├── types.ts                # Recording options & step records
-│   │   ├── recorder.ts             # ArtifactRecorder component
-│   │   └── index.ts
-│   ├── handoff/                # Human handoff & escalation
-│   │   ├── types.ts                # HumanHandoff contract, HandoffResolution
-│   │   ├── state-machine.ts        # Explicit deterministic lifecycle
-│   │   ├── coordinator.ts          # HandoffCoordinator
-│   │   └── index.ts
-│   ├── replay/                 # Deterministic replay layer
-│   │   ├── types.ts                # ReplayOptions
-│   │   ├── checkpoint-evaluator.ts # Checkpoint condition evaluation on Surface
-│   │   ├── replay-engine.ts        # Deterministic step executor (no LLM)
-│   │   └── index.ts
-│   └── interpolation/          # Artifact parameter interpolation
-│       └── interpolate.ts
+│   ├── agent/                  # Discovery agent, model clients (Gemini/TAMU), goal verifiers
+│   ├── domain/                 # Core Zod schemas (actions, goals, artifacts, outcomes, policy)
+│   ├── surface/                # Technology-neutral Surface interface & Playwright BrowserSurface
+│   ├── policy/                 # PolicyEngine, PolicyEnforcedSurface wrapper, ApprovalStore
+│   ├── handoff/                # HandoffCoordinator, state machine, same-session contracts
+│   ├── replay/                 # Deterministic ReplayEngine (zero LLM in the loop)
+│   ├── artifact/               # ArtifactRecorder & parameterization logic
+│   ├── interpolation/          # {{param}} template interpolation
+│   └── evidence/               # FileEvidenceLogger (JSONL) & InMemoryEvidenceLogger
 ├── scripts/
-│   ├── browser-surface-smoke.ts    # Headed browser smoke test
-│   └── discover.ts                 # Live discovery agent CLI with fallback support
-├── tests/                      # Vitest test suites (205 tests)
-│   └── fixtures/                   # Canonical capability artifact fixtures
-├── evidence/                   # Discovery run evidence and artifacts (gitignored)
-│   ├── discovery/                  # Run event logs (JSONL)
-│   └── artifacts/                  # Persisted CapabilityArtifacts (JSON)
-├── PROJECT_SPEC.md             # Architectural specification
+│   ├── discover.ts             # Live LLM discovery CLI (npm run agent:discover)
+│   ├── replay.ts               # Deterministic replay CLI (npm run agent:replay)
+│   └── browser-surface-smoke.ts# BrowserSurface smoke test
+├── tests/                      # Automated Vitest test suites
+├── evidence/                   # Committed discovery traces, replay logs, and artifacts
+├── REPORT.md                   # Complete architectural design report & trade-off analysis
+├── PROJECT_SPEC.md             # Detailed engineering specification
 └── README.md
 ```
 
-## Human Handoff & Same-Session Escalation (Phase 1E)
+---
 
-When automation encounters an action requiring confirmation (such as a high-risk credential reset or protected transaction), the system safely pauses automation and escalates control to a human operator.
+## Deliberate Scope Limitations
 
-### 1. Why Human Escalation Exists
-Automation should never guess on high-consequence operations or perform unconfirmed side effects. Instead of failing blindly or crashing, the system establishes a clean confirmation boundary, captures sanitized context, and transfers operational control to a human.
-
-### 2. Same-Session Preservation
-Human escalation occurs on the **exact same live Surface/session**:
-- The technology-neutral `Surface` maintains a stable, immutable `sessionId`.
-- The human operator receives the active `Surface` reference—no browser is closed, no second browser is launched, and no detached session is created.
-- Continuity is verified by asserting that `sessionId` and underlying page references are identical before, during, and after handoff.
-
-### 3. Approval Flow Through Policy Boundary
-Human approval does **NOT** bypass policy enforcement:
-```
-Action Proposed
-  ↓
-PolicyEngine evaluates
-  ↓
-Returns `require_confirmation`
-  ↓
-Automation pauses; HumanHandoff created
-  ↓
-Human operator resolves:
-  ├── allow_once: stages single-use authorization on PolicyEnforcedSurface
-  ├── allow_and_remember: saves scoped record to ApprovalStore
-  └── deny: records denial; workflow terminates without executing action
-  ↓
-Action retried through PolicyEnforcedSurface
-  ↓
-PolicyEngine re-evaluates (NEVER bypassed)
-  ↓
-Ephemeral or remembered approval matches scope and permits execution
-  ↓
-Action executes on live surface; automation resumes
-```
-
-### 4. Structured Evidence Audit Trail
-Structured JSONL evidence events capture every transition:
-- `handoff_requested`: Automation paused (`controlMode: 'paused'`), recording blocked action, reason, and `sessionId`.
-- `human_takeover`: Human assumed control (`controlMode: 'human'`).
-- `approval_granted` / `approval_denied`: Operator decision and reasoning recorded.
-- `human_returned`: Control returned to automation.
-- `session_resumed`: Automation resumed on the live session (`controlMode: 'automation'`).
-
-## What's Implemented
-
-- ✅ Documented architecture and technology choices
-- ✅ Local banking back-office target application
-- ✅ Surface abstraction interface (technology-neutral with stable `sessionId`)
-- ✅ Playwright-backed BrowserSurface for real Chromium browser interaction
-- ✅ Domain types with Zod validation (goals, actions, observations, artifacts, outcomes, evidence)
-- ✅ Policy engine with domain/action/route/target allowlisting and regex-validated `riskyRoutes`
-- ✅ Policy-enforced surface wrapper with ephemeral `allow_once` and durable `allow_and_remember` approval handling
-- ✅ Deterministic interpolation helpers and artifact validation
-- ✅ Evidence event model
-- ✅ Provider-neutral agent contracts (ModelClient, ModelDecision, AgentResult, state machine)
-- ✅ **Primary LLM provider**: Gemini 3.8 Flash via `@google/genai`
-- ✅ **Fallback LLM provider**: TAMU AI Chat (OpenAI-compatible chat completions)
-- ✅ **Provider fallback wrapper**: `FallbackModelClient` with selective transient failure routing (429, 500, 502, 503, 504, timeout, network error)
-- ✅ **Fast fail on client/auth errors**: 400, 401, 403, and invalid configs fail immediately without hiding configuration issues
-- ✅ **Discovery loop** (observe → decide → validate → policy → execute)
-- ✅ **Structured JSON output** from model (schema-constrained, not text-parsed)
-- ✅ **Independent DONE verification** (model claims ≠ system success)
-- ✅ **Model trust boundary** (all model output validated via Zod before reaching surface)
-- ✅ **File-based evidence logging** (JSONL)
-- ✅ **Deterministic agent & fallback tests** (205 tests across 16 test files)
-- ✅ **CLI for live discovery** (`npm run agent:discover`) with provider fallback and override flags
-- ✅ **Deterministic replay engine** (`src/replay/`): executes capability artifacts step-by-step with **zero LLM in the loop**
-- ✅ **Runtime entry point flexibility**: replay against ephemeral test environments without mutating artifact provenance
-- ✅ **Checkpoint evaluation**: pre/postconditions, success conditions, and business outcomes (`MEMBER_NOT_FOUND`)
-- ✅ **Granular replay taxonomy**: `success`, `business_outcome`, `denied` (human control decision), `invalid_artifact`, `invalid_input`, `recoverable_failure`, `hard_failure`
-- ✅ **Live replay integration tests**: end-to-end replay verified against local Bank Operations Console in real Chromium
-- ✅ **Artifact recording & persistence** (`src/artifact/`): converts live discovery traces into reusable, validated `CapabilityArtifact` JSON files
-- ✅ **Parameterization**: abstracts concrete inputs (e.g. `10234`) into `{{memberId}}` using the existing interpolation contract
-- ✅ **Full discovery → artifact → replay lifecycle**: verified end-to-end against live Bank Operations Console
-- ✅ **Human handoff & same-session escalation** (`src/handoff/`): technology-neutral handoff, deterministic state machine, approval integration through policy boundary, and strict session identity verification
-
-## What's NOT Implemented Yet
-
-- ❌ PII redaction
-
+To keep the core loop authentic and production-verified, the following capabilities are deliberately not implemented in this prototype:
+- **Generic PII redaction**: Credentials and API keys are scrubbed, and observations capture bounding metrics rather than raw DOM; however, there is no automatic PII masking engine for member data. (See [REPORT.md](./REPORT.md#line=83) for a production design).
+- **Non-web surface adapters**: The technology-neutral `Surface` interface supports web and future desktop/terminal adapters, but only Playwright/Chromium is implemented.
+- **Production operator UI**: Handoff features an in-process callback and verified state machine, not a web-based human operator dashboard.
+- **Multi-tenant infrastructure**: Scoped approval keys and runtime entry-point overrides exist, but per-tenant isolation catalogs and configuration services are not implemented.
+- **Automatic replay recovery**: `recoverable_failure` indicates a transient failure the caller may retry; the engine does not perform autonomous self-healing.
